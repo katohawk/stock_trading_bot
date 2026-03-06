@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
-OKX（欧易）现货：定时监控 + 涨卖跌买。可只推荐，也可实盘下单（需配置 API）。
-环境变量：OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE（实盘下单时必填）
-用法：
-  python run_okx_live.py --symbol BTC/USDT --ratio 1 --interval 300   # 每 5 分钟检查，只推荐
-  python run_okx_live.py --symbol BTC/USDT --ratio 1 --execute         # 一次检查并真实下单（慎用）
+OKX 自动化交易脚本：参考价涨卖跌买 + 盈利硬约束 + 三秒价格确认 + 市价保护 + 持久化 .monitor_ref.json。
+API Key 存放在 .env。详细中文日志。
 """
 import argparse
 import json
@@ -15,7 +12,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# 从项目根目录的 .env 加载配置（若有）
 _env_file = Path(__file__).resolve().parent / ".env"
 if _env_file.exists():
     try:
@@ -24,11 +20,122 @@ if _env_file.exists():
     except ImportError:
         pass
 
+# ---------- 常量 -----------
+MIN_PROFIT_RATIO = 0.003           # 卖出硬约束：扣费后至少 0.3% 利润
+PRICE_SAMPLES = 3                  # 三秒价格确认：取样次数
+PRICE_SAMPLE_INTERVAL = 1.0        # 取样间隔（秒）
+SPIKE_STD_THRESHOLD_PCT = 0.001    # 3 次均价标准差 > 0.1% 判定插针
+MAX_SLIPPAGE = 0.001               # 市价保护：买一卖一价差超过 0.1% 暂缓
+
+MONITOR_REF_FILE = Path(__file__).resolve().parent / ".monitor_ref.json"
+SESSION_PNL_FILE = Path(__file__).resolve().parent / ".session_pnl.json"
+
+
+def _log(msg: str) -> None:
+    print(f"[日志] {msg}")
+
+
+def load_state(symbol: str) -> dict:
+    """从 .monitor_ref.json 读取 reference_price、avg_cost、position_qty。"""
+    if not MONITOR_REF_FILE.exists():
+        return {}
+    try:
+        data = json.loads(MONITOR_REF_FILE.read_text(encoding="utf-8"))
+        return data.get(symbol) or {}
+    except Exception as e:
+        _log(f"读取 .monitor_ref.json 失败: {e}")
+        return {}
+
+
+def save_state(symbol: str, reference_price: float = None, avg_cost: float = None, position_qty: float = None) -> None:
+    """将 reference_price、avg_cost、position_qty 同步写入 .monitor_ref.json。"""
+    try:
+        data = json.loads(MONITOR_REF_FILE.read_text(encoding="utf-8")) if MONITOR_REF_FILE.exists() else {}
+    except Exception:
+        data = {}
+    if symbol not in data:
+        data[symbol] = {}
+    if reference_price is not None:
+        data[symbol]["reference_price"] = reference_price
+    if avg_cost is not None:
+        data[symbol]["avg_cost"] = avg_cost
+    if position_qty is not None:
+        data[symbol]["position_qty"] = position_qty
+    MONITOR_REF_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _log("已持久化 .monitor_ref.json: %s reference_price=%s avg_cost=%s position_qty=%s" % (symbol, reference_price, avg_cost, position_qty))
+
 
 def get_price_from_okx(broker, symbol: str) -> float:
     ex = broker._get_exchange()
     ticker = ex.fetch_ticker(symbol)
     return float(ticker.get("last") or ticker.get("close") or 0)
+
+
+def get_price_from_okx_with_retry(broker, symbol: str, max_retries: int = 3) -> float:
+    for attempt in range(max_retries):
+        try:
+            return get_price_from_okx(broker, symbol)
+        except Exception as e:
+            err = str(e).lower()
+            if "429" in err or "rate" in err or "limit" in err:
+                wait = 2 ** attempt
+                _log(f"API 限频，第 {attempt + 1}/{max_retries} 次重试，{wait}s 后重试...")
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("获取价格重试次数用尽")
+
+
+def fetch_three_price_samples(broker, symbol: str, sample_interval: float = PRICE_SAMPLE_INTERVAL, n: int = PRICE_SAMPLES):
+    """每隔 1 秒取样一次，连续 3 次，返回 (均价, 标准差, 是否插针)。"""
+    samples = []
+    for i in range(n):
+        try:
+            p = get_price_from_okx_with_retry(broker, symbol)
+            samples.append(p)
+            _log(f"  价格取样 {i + 1}/{n}: {p:.4f}")
+        except Exception as e:
+            _log(f"  取样 {i + 1} 失败: {e}")
+            return None, None, True
+        if i < n - 1:
+            time.sleep(sample_interval)
+    import statistics
+    avg = sum(samples) / len(samples)
+    try:
+        std = statistics.stdev(samples)
+    except Exception:
+        std = 0.0
+    # 标准差 / 均价 > 0.1% 判定为插针
+    is_spike = (avg > 0 and (std / avg) > SPIKE_STD_THRESHOLD_PCT)
+    _log(f"  三秒价格确认: 均价={avg:.4f} 标准差={std:.4f} 标准差/均价={std/avg*100:.3f}% 判定插针={is_spike}")
+    return avg, std, is_spike
+
+
+def get_bid_ask(broker, symbol: str) -> tuple:
+    """获取买一卖一价，返回 (bid1, ask1)。"""
+    ex = broker._get_exchange()
+    ob = ex.fetch_order_book(symbol, limit=1)
+    bids = ob.get("bids") or []
+    asks = ob.get("asks") or []
+    bid1 = float(bids[0][0]) if bids else 0.0
+    ask1 = float(asks[0][0]) if asks else 0.0
+    return bid1, ask1
+
+
+def check_slippage_ok(broker, symbol: str, max_slippage: float = MAX_SLIPPAGE) -> bool:
+    """市价保护：价差超过 max_slippage 则暂缓。返回 True 表示可下单。"""
+    bid1, ask1 = get_bid_ask(broker, symbol)
+    if bid1 <= 0 or ask1 <= 0:
+        _log("  市价保护: 无法获取买卖盘，跳过校验")
+        return True
+    spread = ask1 - bid1
+    mid = (bid1 + ask1) / 2
+    spread_pct = spread / mid if mid else 0
+    _log(f"  市价保护: 买一={bid1:.4f} 卖一={ask1:.4f} 价差={spread_pct*100:.3f}% 上限={max_slippage*100:.2f}%")
+    if spread_pct > max_slippage:
+        _log("  市价保护: 价差过大，暂缓下单")
+        return False
+    return True
 
 
 def get_price_fallback(symbol: str) -> float:
@@ -40,94 +147,172 @@ def get_price_fallback(symbol: str) -> float:
     return 0.0
 
 
-def load_ref(ref_file: Path, symbol: str):
-    if not ref_file.exists():
-        return None
+def load_session_pnl():
+    if not SESSION_PNL_FILE.exists():
+        return None, 0.0
     try:
-        data = json.loads(ref_file.read_text(encoding="utf-8"))
-        return data.get(symbol)
+        data = json.loads(SESSION_PNL_FILE.read_text(encoding="utf-8"))
+        return data.get("session_start_equity"), float(data.get("cumulative_fee", 0))
     except Exception:
-        return None
+        return None, 0.0
 
 
-def save_ref(ref_file: Path, symbol: str, new_ref: float):
-    try:
-        data = json.loads(ref_file.read_text(encoding="utf-8")) if ref_file.exists() else {}
-    except Exception:
-        data = {}
-    data[symbol] = new_ref
-    ref_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_session_pnl(session_start_equity: float, cumulative_fee: float):
+    data = {"session_start_equity": session_start_equity, "cumulative_fee": cumulative_fee}
+    SESSION_PNL_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def sell_profit_ok(price: float, avg_cost: float) -> bool:
+    """盈利硬约束：(当前价 - avg_cost) / avg_cost > 0.003 才允许卖出。"""
+    if avg_cost is None or avg_cost <= 0:
+        return True
+    profit_ratio = (price - avg_cost) / avg_cost
+    ok = profit_ratio > MIN_PROFIT_RATIO
+    _log(f"  盈利硬约束: 当前价={price:.4f} 持仓成本={avg_cost:.4f} 利润率={profit_ratio*100:.3f}% 需>{MIN_PROFIT_RATIO*100:.2f}% 通过={ok}")
+    return ok
 
 
 def main():
-    parser = argparse.ArgumentParser(description="OKX：涨卖跌买监控，可选实盘下单")
-    parser.add_argument("--symbol", default="BTC/USDT", help="交易对，如 BTC/USDT")
-    parser.add_argument("--ratio", type=float, default=1.0, help="触发比例%%")
-    parser.add_argument("--interval", type=float, default=0, help="循环间隔秒，0 表示只跑一次")
-    parser.add_argument("--execute", action="store_true", help="是否真实下单（否则只打印推荐）")
-    parser.add_argument("--demo", action="store_true", help="使用 OKX 模拟盘")
+    parser = argparse.ArgumentParser(description="OKX：涨卖跌买（盈利硬约束 + 三秒确认 + 市价保护）")
+    parser.add_argument("--symbol", default="BTC/USDT", help="交易对")
+    parser.add_argument("--ratio", type=float, default=0.5, help="触发比例%%")
+    parser.add_argument("--interval", type=float, default=0, help="轮询间隔秒")
+    parser.add_argument("--execute", action="store_true", help="是否真实下单")
+    parser.add_argument("--demo", action="store_true", help="OKX 模拟盘")
+    parser.add_argument("--taker-fee-rate", type=float, default=0.001, help="吃单费率")
+    parser.add_argument("--buy-amount-usdt", type=float, default=50.0, help="每次买入固定 USDT")
+    parser.add_argument("--max-slippage", type=float, default=MAX_SLIPPAGE, help="市价保护：价差上限")
     args = parser.parse_args()
 
     from src.strategy import SimpleThresholdStrategy
     from src.strategy.base import SignalDirection
     from src.execution import OKXBroker
-    from src.execution.order import OrderSide
+    from src.execution.order import OrderSide, OrderState
 
     api_key = os.environ.get("OKX_API_KEY", "").strip()
     api_secret = os.environ.get("OKX_API_SECRET", "").strip()
     passphrase = os.environ.get("OKX_PASSPHRASE", "").strip()
 
     if args.execute and (not api_key or not api_secret or not passphrase):
-        print("实盘下单需设置环境变量 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE")
+        _log("实盘下单需在 .env 中设置 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE")
         return 1
 
-    ref_file = Path(".monitor_ref.json")
-    strategy = SimpleThresholdStrategy(ratio_pct=args.ratio, reference_price=load_ref(ref_file, args.symbol))
+    state = load_state(args.symbol)
+    ref_price = state.get("reference_price")
+    avg_cost = state.get("avg_cost")  # 持仓成本，与文档一致
+    position_qty = state.get("position_qty", 0) or 0
 
+    strategy = SimpleThresholdStrategy(ratio_pct=args.ratio, reference_price=ref_price)
+
+    broker = None
     if api_key and api_secret and passphrase:
         try:
             broker = OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase, demo=args.demo)
             account = broker.get_account()
-            price = get_price_from_okx(broker, args.symbol)
-            print(f"[OKX] {args.symbol} 当前价: {price:.4f}  权益约: {account.equity:.2f} USDT")
+            price = get_price_from_okx_with_retry(broker, args.symbol)
+            session_start, cumulative_fee = load_session_pnl()
+            if session_start is None:
+                session_start = account.equity
+                save_session_pnl(session_start, cumulative_fee)
+            pnl = account.equity - session_start
+            net_pnl = pnl - cumulative_fee
+            _log(f"{args.symbol} 当前价={price:.4f} 权益={account.equity:.2f} USDT 本次运行收益={pnl:+.2f} USDT 累计手续费(估)={cumulative_fee:.2f} USDT 净收益={net_pnl:+.2f} USDT")
         except Exception as e:
-            print("OKX API 失败:", e)
+            _log(f"OKX API 失败: {e}")
             return 1
     else:
         price = get_price_fallback(args.symbol)
-        print(f"[行情] {args.symbol} 当前价: {price:.4f} (yfinance)")
+        _log(f"{args.symbol} 当前价={price:.4f} (yfinance)")
 
     if price <= 0:
-        print("无法获取价格")
+        _log("无法获取价格，退出")
         return 1
 
     text, direction, new_ref = strategy.recommend(price)
-    print("推荐:", text)
-    if direction is not None:
-        print("操作方向:", "卖出" if direction == SignalDirection.FLAT else "买入")
-        if args.execute and api_key and api_secret and passphrase:
-            broker = OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase, demo=args.demo)
-            account = broker.get_account()
-            if direction == SignalDirection.LONG:
-                cost = min(account.cash * 0.95, account.equity * 0.2)
-                if cost > 10:
-                    qty = cost / price
-                    order = broker.submit_order(args.symbol, OrderSide.BUY, qty, price=None, reason=text)
-                    print("下单结果:", order.state, order.filled_quantity, order.filled_avg_price or "")
-                else:
-                    print("余额不足或比例过小，未下单")
-            else:
-                pos = account.positions.get(args.symbol)
-                if pos and pos.quantity > 0:
-                    order = broker.submit_order(args.symbol, OrderSide.SELL, pos.quantity, price=None, reason=text)
-                    print("下单结果:", order.state, order.filled_quantity, order.filled_avg_price or "")
-                else:
-                    print("无该币种持仓，未下单")
+    _log(f"推荐: {text}")
 
-    save_ref(ref_file, args.symbol, new_ref)
+    executed = False
+    if direction is not None:
+        _log(f"操作方向: {'卖出' if direction == SignalDirection.FLAT else '买入'}")
+
+        if args.execute and broker is not None:
+            # 三秒价格确认：每隔 1 秒取样，共 3 次
+            _log("开始三秒价格确认（每隔 1 秒取样，共 3 次）...")
+            exec_price, _std, is_spike = fetch_three_price_samples(broker, args.symbol, PRICE_SAMPLE_INTERVAL, PRICE_SAMPLES)
+            if exec_price is None or is_spike:
+                _log("插针判定: 3 次均价标准差 > 0.1%，取消本次下单")
+            else:
+                account = broker.get_account()
+                # 市价保护
+                if not check_slippage_ok(broker, args.symbol, args.max_slippage):
+                    _log("市价保护: 买一卖一价差过大，暂缓下单")
+                else:
+                    if direction == SignalDirection.LONG:
+                        amount_usdt = min(args.buy_amount_usdt, account.cash * 0.98)
+                        if amount_usdt >= 10:
+                            qty = amount_usdt / exec_price
+                            try:
+                                order = broker.submit_order(args.symbol, OrderSide.BUY, qty, price=None, reason=text)
+                                if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
+                                    fill_qty = order.filled_quantity
+                                    fill_price = order.filled_avg_price
+                                    fee_est = fill_qty * fill_price * args.taker_fee_rate
+                                    session_start, cum_fee = load_session_pnl()
+                                    if session_start is not None:
+                                        save_session_pnl(session_start, cum_fee + fee_est)
+                                    if position_qty and avg_cost:
+                                        new_avg = (avg_cost * position_qty + fill_price * fill_qty) / (position_qty + fill_qty)
+                                        new_qty = position_qty + fill_qty
+                                    else:
+                                        new_avg = fill_price
+                                        new_qty = fill_qty
+                                    save_state(args.symbol, reference_price=new_ref, avg_cost=new_avg, position_qty=new_qty)
+                                    _log(f"买入成交: 数量={fill_qty} 成交价={fill_price:.2f} 成交额={fill_qty * fill_price:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT 更新持仓成本={new_avg:.4f} 持仓量={new_qty}")
+                                    executed = True
+                                else:
+                                    _log(f"下单结果: {order.state} {order.reason or ''}")
+                            except Exception as e:
+                                _log(f"下单异常: {e}")
+                        else:
+                            _log("余额不足或低于最小下单额，未下单")
+                    else:
+                        # 卖出：盈利硬约束 (当前价 - avg_cost) / avg_cost > 0.003
+                        if not sell_profit_ok(exec_price, avg_cost):
+                            _log("卖出跳过: 扣费后利润未达 0.3%，不卖出")
+                        else:
+                            pos = account.positions.get(args.symbol)
+                            if pos and pos.quantity > 0:
+                                try:
+                                    order = broker.submit_order(args.symbol, OrderSide.SELL, pos.quantity, price=None, reason=text)
+                                    if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
+                                        sell_price = order.filled_avg_price
+                                        sell_qty = order.filled_quantity
+                                        trade_value = sell_qty * sell_price
+                                        fee_est = trade_value * args.taker_fee_rate
+                                        session_start, cum_fee = load_session_pnl()
+                                        if session_start is not None:
+                                            save_session_pnl(session_start, cum_fee + fee_est)
+                                        avg = avg_cost or sell_price
+                                        expected_return_pct = (sell_price - avg) / avg * 100
+                                        after_fee_return_pct = expected_return_pct - 2 * args.taker_fee_rate * 100
+                                        _log(f"卖出成交: 数量={sell_qty} 成交价={sell_price:.2f} 成交额={trade_value:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT")
+                                        _log(f"预期收益率: {expected_return_pct:.2f}%  |  扣费后收益: {after_fee_return_pct:.2f}%")
+                                        save_state(args.symbol, reference_price=new_ref, avg_cost=None, position_qty=0.0)
+                                        executed = True
+                                    else:
+                                        _log(f"下单结果: {order.state} {order.reason or ''}")
+                                except Exception as e:
+                                    _log(f"下单异常: {e}")
+                            else:
+                                _log("无该币种持仓，未下单")
+
+    if executed or direction is None:
+        save_state(args.symbol, reference_price=new_ref)
+    elif direction is not None and not executed:
+        pass  # 防插针/盈利不足/滑点过大时保留原 reference_price
 
     if args.interval > 0:
-        print(f"\n{args.interval} 秒后再次检查...")
+        _log(f"{args.interval} 秒后再次检查...")
         time.sleep(args.interval)
         return main()
     return 0
