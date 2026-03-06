@@ -6,25 +6,27 @@
 
 ## 如果你会 Java / Kotlin / TypeScript：先看这句对照
 
-| Python | Java | Kotlin | TypeScript |
-|--------|------|--------|------------|
-| `def f(x: int) -> str:` | `String f(int x)` | `fun f(x: Int): String` | `function f(x: number): string` |
-| `x: str`、`-> dict` | 类型写在前面 | 同左 | 同左 |
-| `None` | `null` | `null` | `null` |
-| `if not x:` | `if (!x)` | `if (!x)` | `if (!x)` |
-| `dict` | `Map` / `HashMap` | `Map` / `mutableMapOf` | `Record<string, T>` / `object` |
-| `data.get("key")` | `data.get("key")` | `data["key"]` | `data["key"]` / `data?.key` |
-| `[]` 空列表 | `new ArrayList<>()` | `emptyList()` | `[]` |
-| `{}` 空字典 | `new HashMap<>()` | `emptyMap()` | `{}` |
-| `self.xxx` | `this.xxx` | 省略写 `xxx` | `this.xxx` |
-| `class A(B):` | `class A extends B` | `class A : B()` | `class A extends B` |
-| `@dataclass` | 手写 getter/setter 或 Lombok `@Data` | `data class` | `interface` + 对象字面量 |
-| `Enum` | `enum class` | `enum class` | `enum` / 字面量联合类型 |
-| `ABC` + `@abstractmethod` | `abstract class` + `abstract method` | `abstract class` | `abstract class` |
-| 没有 `;`，缩进即块 | `{}` 表示块 | 同 Java | 同左 |
-| `True` / `False` | `true` / `false` | 同左 | `true` / `false` |
-| `"a" in data` | `data.containsKey("a")` | `data.containsKey("a")` | `"a" in data` |
-| `isinstance(x, dict)` | `x instanceof Map` | `x is Map` | `typeof x === "object"` 等 |
+
+| Python                    | Java                                 | Kotlin                  | TypeScript                      |
+| ------------------------- | ------------------------------------ | ----------------------- | ------------------------------- |
+| `def f(x: int) -> str:`   | `String f(int x)`                    | `fun f(x: Int): String` | `function f(x: number): string` |
+| `x: str`、`-> dict`        | 类型写在前面                               | 同左                      | 同左                              |
+| `None`                    | `null`                               | `null`                  | `null`                          |
+| `if not x:`               | `if (!x)`                            | `if (!x)`               | `if (!x)`                       |
+| `dict`                    | `Map` / `HashMap`                    | `Map` / `mutableMapOf`  | `Record<string, T>` / `object`  |
+| `data.get("key")`         | `data.get("key")`                    | `data["key"]`           | `data["key"]` / `data?.key`     |
+| `[]` 空列表                  | `new ArrayList<>()`                  | `emptyList()`           | `[]`                            |
+| `{}` 空字典                  | `new HashMap<>()`                    | `emptyMap()`            | `{}`                            |
+| `self.xxx`                | `this.xxx`                           | 省略写 `xxx`               | `this.xxx`                      |
+| `class A(B):`             | `class A extends B`                  | `class A : B()`         | `class A extends B`             |
+| `@dataclass`              | 手写 getter/setter 或 Lombok `@Data`    | `data class`            | `interface` + 对象字面量             |
+| `Enum`                    | `enum class`                         | `enum class`            | `enum` / 字面量联合类型                |
+| `ABC` + `@abstractmethod` | `abstract class` + `abstract method` | `abstract class`        | `abstract class`                |
+| 没有 `;`，缩进即块               | `{}` 表示块                             | 同 Java                  | 同左                              |
+| `True` / `False`          | `true` / `false`                     | 同左                      | `true` / `false`                |
+| `"a" in data`             | `data.containsKey("a")`              | `data.containsKey("a")` | `"a" in data`                   |
+| `isinstance(x, dict)`     | `x instanceof Map`                   | `x is Map`              | `typeof x === "object"` 等       |
+
 
 **入口**：就像 Java 的 `main(String[] args)`，这里是 `main()`，参数用 `argparse` 从命令行读（类似 `process.argv` 的解析库）。**跑一次** = 调一次 `main()`；`--interval 60` 就是每 60 秒再调一次 `main()`。
 
@@ -74,8 +76,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 ```
 
-- **`Path(__file__).resolve().parent`**：当前脚本所在目录的绝对路径。这样无论从哪执行 `python run_okx_live.py`，都能找到项目根目录。
-- **`sys.path.insert(0, ...)`**：把项目根放进模块搜索路径，后面才能 `from src.strategy import ...`。
+- `**Path(__file__).resolve().parent**`：当前脚本所在目录的绝对路径。这样无论从哪执行 `python run_okx_live.py`，都能找到项目根目录。
+- `**sys.path.insert(0, ...)**`：把项目根放进模块搜索路径，后面才能 `from src.strategy import ...`。
 
 接着用 `dotenv` 从 `.env` 读 `OKX_API_KEY` 等（若存在）。
 
@@ -92,7 +94,7 @@ MONITOR_REF_FILE = Path(__file__).resolve().parent / ".monitor_ref.json"
 ```
 
 - 用**全大写**表示「常量」，是习惯写法。
-- **`Path / ".monitor_ref.json"`**：路径拼接，等价于 `os.path.join(..., ".monitor_ref.json")`。
+- `**Path / ".monitor_ref.json"`**：路径拼接，等价于 `os.path.join(..., ".monitor_ref.json")`。
 
 ---
 
@@ -115,11 +117,11 @@ def load_state(symbol: str) -> dict:
         return {}
 ```
 
-- **`symbol: str` / `-> dict`**：类型注解（type hint），方便读代码和 IDE 提示，不写也不会报错。
-- **`MONITOR_REF_FILE.read_text(encoding="utf-8")`**：Path 对象的方法，读整个文件为字符串。
-- **`json.loads(...)`**：把 JSON 字符串转成 Python 的 dict/list。
-- **`data.get(symbol)`**：字典取键，没有则返回 `None`，不会像 `data[symbol]` 那样抛 KeyError。
-- **`isinstance(raw, dict)`**：判断类型，避免 `.monitor_ref.json` 里旧格式是数字时当 dict 用导致报错。
+- `**symbol: str` / `-> dict**`：类型注解（type hint），方便读代码和 IDE 提示，不写也不会报错。
+- `**MONITOR_REF_FILE.read_text(encoding="utf-8")**`：Path 对象的方法，读整个文件为字符串。
+- `**json.loads(...)**`：把 JSON 字符串转成 Python 的 dict/list。
+- `**data.get(symbol)**`：字典取键，没有则返回 `None`，不会像 `data[symbol]` 那样抛 KeyError。
+- `**isinstance(raw, dict)**`：判断类型，避免 `.monitor_ref.json` 里旧格式是数字时当 dict 用导致报错。
 
 **Python 小知识**：用 `get` + `isinstance` 做兼容，是处理「可能脏的数据」的常见写法。
 
@@ -138,9 +140,9 @@ def save_state(symbol: str, reference_price: float = None, avg_cost: float = Non
     MONITOR_REF_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 ```
 
-- **`= None`**：默认参数，调用时可以不传。
-- **`json.dumps(..., indent=2)`**：把 dict 转成带缩进的 JSON 字符串，方便人读。
-- **`ensure_ascii=False`**：中文等字符不转成 `\uXXXX`，直接保留。
+- `**= None**`：默认参数，调用时可以不传。
+- `**json.dumps(..., indent=2)**`：把 dict 转成带缩进的 JSON 字符串，方便人读。
+- `**ensure_ascii=False**`：中文等字符不转成 `\uXXXX`，直接保留。
 
 ---
 
@@ -156,8 +158,8 @@ def main():
     args = parser.parse_args()
 ```
 
-- **`action="store_true"`**：出现 `--execute` 就是 `True`，不出现就是 `False`。
-- **`type=float`**：自动把命令行字符串转成浮点数。
+- `**action="store_true"**`：出现 `--execute` 就是 `True`，不出现就是 `False`。
+- `**type=float**`：自动把命令行字符串转成浮点数。
 - 使用方式：`python run_okx_live.py --symbol BTC/USDT --execute --interval 60`。
 
 **Python 小知识**：`argparse` 是标准库，写小工具时非常常用。
@@ -179,7 +181,7 @@ text, direction, new_ref = strategy.recommend(price)
 ```
 
 - **策略不碰交易所**：只根据「当前价 + 参考价 + 比例」算出一个方向（买/卖/观望）和一句文案。
-- **`recommend(price)`** 返回三个东西：`(文案, 方向或 None, 新参考价)`，用元组解包接收。
+- `**recommend(price)`** 返回三个东西：`(文案, 方向或 None, 新参考价)`，用元组解包接收。
 
 策略实现见下一节。
 
@@ -198,8 +200,8 @@ if order.state == OrderState.FILLED:
     # 成交了，更新 avg_cost、position_qty、reference_price，并 save_state
 ```
 
-- **`price=None`**：表示市价单。
-- **`OrderState.FILLED`**：枚举，表示订单已完全成交。用枚举比手写字符串 `"filled"` 更不容易拼错。
+- `**price=None**`：表示市价单。
+- `**OrderState.FILLED**`：枚举，表示订单已完全成交。用枚举比手写字符串 `"filled"` 更不容易拼错。
 
 **Python 小知识**：`Enum` 把一组固定取值命名，代码里用 `OrderState.FILLED` 比用字符串清晰。
 
@@ -215,8 +217,8 @@ if args.interval > 0:
 return 0
 ```
 
-- **`time.sleep(秒数)`**：当前线程暂停，不占 CPU。
-- **`return main()`**：递归再跑一遍 main，实现「每隔 N 秒检查一次」。等价于 `while True: ...; time.sleep(interval)`，这里用递归写法。
+- `**time.sleep(秒数)**`：当前线程暂停，不占 CPU。
+- `**return main()**`：递归再跑一遍 main，实现「每隔 N 秒检查一次」。等价于 `while True: ...; time.sleep(interval)`，这里用递归写法。
 
 ---
 
@@ -245,9 +247,9 @@ class SimpleThresholdStrategy(StrategyBase):
         return ("涨跌未达比例，观望", None, ref)
 ```
 
-- **`StrategyBase`**：在 `base.py` 里用 `ABC`（抽象基类）定义，要求子类实现 `next()` 等；`recommend()` 是为「单次价格、无 K 线」的监控场景加的接口。
-- **`SignalDirection`**：枚举，`LONG`=买，`FLAT`=卖/平仓。
-- **`Optional[SignalDirection]`**：类型提示，表示「要么是 SignalDirection，要么是 None」。
+- `**StrategyBase**`：在 `base.py` 里用 `ABC`（抽象基类）定义，要求子类实现 `next()` 等；`recommend()` 是为「单次价格、无 K 线」的监控场景加的接口。
+- `**SignalDirection**`：枚举，`LONG`=买，`FLAT`=卖/平仓。
+- `**Optional[SignalDirection]**`：类型提示，表示「要么是 SignalDirection，要么是 None」。
 
 **Python 小知识**：`class 子类(父类):` 是继承；`self.xxx` 是实例属性；`Optional[X]` 等价于 `Union[X, None]`。
 
@@ -283,8 +285,8 @@ class Order:
     # ...
 ```
 
-- **`(str, Enum)`**：枚举值同时是字符串，方便和交易所 API 的 `"buy"` / `"filled"` 对齐。
-- **`@dataclass`**：自动生成 `__init__`、`__repr__`，少写样板代码，用来放「一堆字段」的数据很合适。
+- `**(str, Enum)**`：枚举值同时是字符串，方便和交易所 API 的 `"buy"` / `"filled"` 对齐。
+- `**@dataclass**`：自动生成 `__init__`、`__repr__`，少写样板代码，用来放「一堆字段」的数据很合适。
 
 **Python 小知识**：`dataclass` 和 `Enum` 是写「数据结构」和「状态/方向」的常用工具。
 
@@ -305,8 +307,8 @@ class BrokerBase(ABC):
         pass
 ```
 
-- **`ABC`**：抽象基类，不能直接实例化，只能被继承。
-- **`@abstractmethod`**：子类必须实现这些方法，否则会报错。这样「回测」用模拟 Broker、「实盘」用 OKXBroker，接口统一。
+- `**ABC**`：抽象基类，不能直接实例化，只能被继承。
+- `**@abstractmethod**`：子类必须实现这些方法，否则会报错。这样「回测」用模拟 Broker、「实盘」用 OKXBroker，接口统一。
 
 **Python 小知识**：用抽象基类定义「契约」，多种实现（OKX、币安、模拟）都遵守同一套接口。
 
@@ -315,8 +317,8 @@ class BrokerBase(ABC):
 ### 3. OKX 实现：`broker_okx.py`
 
 - 用 **ccxt** 库连 OKX：`ccxt.okx({"apiKey": ..., "secret": ..., "password": passphrase})`。
-- **`_get_exchange()`**：懒加载，第一次要下单或查账户时才建连接。
-- **`submit_order`**：调 `ex.create_order(symbol, type="market", side="buy", amount=qty)`，然后把返回结果转成我们自己的 `Order` 对象（含 `state`、`filled_quantity`、`filled_avg_price`）。
+- `**_get_exchange()`**：懒加载，第一次要下单或查账户时才建连接。
+- `**submit_order**`：调 `ex.create_order(symbol, type="market", side="buy", amount=qty)`，然后把返回结果转成我们自己的 `Order` 对象（含 `state`、`filled_quantity`、`filled_avg_price`）。
 
 ---
 
@@ -339,7 +341,7 @@ class AccountState:
     equity: float
 ```
 
-- **`broker.get_account()`** 返回的就是 `AccountState`，所以脚本里会写 `account.positions.get(args.symbol)`、`account.cash`、`account.equity`。
+- `**broker.get_account()**` 返回的就是 `AccountState`，所以脚本里会写 `account.positions.get(args.symbol)`、`account.cash`、`account.equity`。
 
 **Python 小知识**：`Dict[str, PositionState]` 表示「键是 str，值是 PositionState 的字典」，类型提示让代码意图更清楚。
 
