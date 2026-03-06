@@ -344,12 +344,11 @@ def main():
                             else:
                                 _log("无该币种持仓，未下单")
 
-    if executed or direction is None:
-        save_state(args.symbol, reference_price=new_ref)
-    elif direction is not None and not executed:
+    if direction is not None and not executed:
         # 本周期已建议买卖但未成交（PENDING/余额不足/插针/滑点），仍更新参考价，避免下一周期重复触发同向信号
         save_state(args.symbol, reference_price=new_ref)
         _log("本周期已触发信号但未成交，已更新参考价以避免重复下单")
+    # executed 时已在买卖分支内 save_state；观望(direction is None)时参考价未变，不写盘减少刷屏
 
     if args.interval > 0:
         _log(f"{args.interval} 秒后再次检查...")
