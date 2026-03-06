@@ -178,6 +178,25 @@ def sell_profit_ok(price: float, avg_cost: float) -> bool:
     return ok
 
 
+def wait_for_order_fill(broker, order, timeout_sec: float = 30, poll_interval: float = 2):
+    """下单后轮询订单状态直到成交/撤单/拒单或超时。返回更新后的 order。"""
+    from src.execution.order import OrderState
+    if order.is_done():
+        return order
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        time.sleep(poll_interval)
+        o = broker.get_order(order.broker_order_id or order.order_id)
+        if o is None:
+            break
+        order = o
+        if order.is_done():
+            _log(f"  订单 {order.broker_order_id} 状态: {order.state}")
+            return order
+    _log(f"  订单 {order.broker_order_id} 轮询超时({timeout_sec}s)，当前状态: {order.state}")
+    return order
+
+
 def main():
     parser = argparse.ArgumentParser(description="OKX：涨卖跌买（盈利硬约束 + 三秒确认 + 市价保护）")
     parser.add_argument("--symbol", default="BTC/USDT", help="交易对")
@@ -187,6 +206,7 @@ def main():
     parser.add_argument("--demo", action="store_true", help="OKX 模拟盘")
     parser.add_argument("--taker-fee-rate", type=float, default=0.001, help="吃单费率")
     parser.add_argument("--buy-amount-usdt", type=float, default=50.0, help="每次买入固定 USDT")
+    parser.add_argument("--min-buy-usdt", type=float, default=10.0, help="低于此金额(USDT)不下单")
     parser.add_argument("--max-slippage", type=float, default=MAX_SLIPPAGE, help="市价保护：价差上限")
     args = parser.parse_args()
 
@@ -220,6 +240,14 @@ def main():
             if session_start is None:
                 session_start = account.equity
                 save_session_pnl(session_start, cumulative_fee)
+            # 启动时与交易所持仓同步：本地无持仓但交易所有仓位时，用交易所数量与当前价补全
+            pos = account.positions.get(args.symbol)
+            if pos and (pos.quantity or 0) > 0 and not (position_qty or 0):
+                position_qty = pos.quantity
+                if not avg_cost or avg_cost <= 0:
+                    avg_cost = price
+                save_state(args.symbol, position_qty=position_qty, avg_cost=avg_cost)
+                _log("已从交易所同步持仓: 数量=%s 成本(估)=%.4f" % (position_qty, avg_cost))
             pnl = account.equity - session_start
             net_pnl = pnl - cumulative_fee
             _log(f"{args.symbol} 当前价={price:.4f} 权益={account.equity:.2f} USDT 本次运行收益={pnl:+.2f} USDT 累计手续费(估)={cumulative_fee:.2f} USDT 净收益={net_pnl:+.2f} USDT")
@@ -255,10 +283,12 @@ def main():
                 else:
                     if direction == SignalDirection.LONG:
                         amount_usdt = min(args.buy_amount_usdt, account.cash * 0.98)
-                        if amount_usdt >= 10:
+                        if amount_usdt >= args.min_buy_usdt:
                             qty = amount_usdt / exec_price
                             try:
                                 order = broker.submit_order(args.symbol, OrderSide.BUY, qty, price=None, reason=text)
+                                if not order.is_done():
+                                    order = wait_for_order_fill(broker, order, timeout_sec=30, poll_interval=2)
                                 if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
                                     fill_qty = order.filled_quantity
                                     fill_price = order.filled_avg_price
@@ -280,7 +310,7 @@ def main():
                             except Exception as e:
                                 _log(f"下单异常: {e}")
                         else:
-                            _log("余额不足或低于最小下单额，未下单")
+                            _log("余额不足或低于最小下单额，未下单（可用 USDT=%.2f 需>=%.2f）" % (account.cash, args.min_buy_usdt))
                     else:
                         # 卖出：盈利硬约束 (当前价 - avg_cost) / avg_cost > 0.003
                         if not sell_profit_ok(exec_price, avg_cost):
@@ -290,6 +320,8 @@ def main():
                             if pos and pos.quantity > 0:
                                 try:
                                     order = broker.submit_order(args.symbol, OrderSide.SELL, pos.quantity, price=None, reason=text)
+                                    if not order.is_done():
+                                        order = wait_for_order_fill(broker, order, timeout_sec=30, poll_interval=2)
                                     if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
                                         sell_price = order.filled_avg_price
                                         sell_qty = order.filled_quantity
@@ -315,7 +347,9 @@ def main():
     if executed or direction is None:
         save_state(args.symbol, reference_price=new_ref)
     elif direction is not None and not executed:
-        pass  # 防插针/盈利不足/滑点过大时保留原 reference_price
+        # 本周期已建议买卖但未成交（PENDING/余额不足/插针/滑点），仍更新参考价，避免下一周期重复触发同向信号
+        save_state(args.symbol, reference_price=new_ref)
+        _log("本周期已触发信号但未成交，已更新参考价以避免重复下单")
 
     if args.interval > 0:
         _log(f"{args.interval} 秒后再次检查...")
