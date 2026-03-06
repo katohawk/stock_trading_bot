@@ -26,9 +26,16 @@ PRICE_SAMPLES = 3                  # 三秒价格确认：取样次数
 PRICE_SAMPLE_INTERVAL = 1.0        # 取样间隔（秒）
 SPIKE_STD_THRESHOLD_PCT = 0.001    # 3 次均价标准差 > 0.1% 判定插针
 MAX_SLIPPAGE = 0.001               # 市价保护：买一卖一价差超过 0.1% 暂缓
+COOLDOWN_SEC_DEFAULT = 60          # 同币种两次下单最小间隔（秒）
+SELL_FEE_COMP_PCT_DEFAULT = 0.2    # 上一笔买入后卖出时额外比例补偿（%）
+EXEC_QUALITY_THRESHOLD_PCT = 0.1   # 成交价与下单时均价偏差超此阈值计为一次不良
+EXEC_PAUSE_SEC_DEFAULT = 300       # 连续 3 次不良后自动暂停秒数
 
 MONITOR_REF_FILE = Path(__file__).resolve().parent / ".monitor_ref.json"
 SESSION_PNL_FILE = Path(__file__).resolve().parent / ".session_pnl.json"
+
+# 成交质量：连续不良次数（进程内，连续 3 次超差则暂停 5 分钟）
+_consecutive_bad_exec = 0
 
 
 def _log(msg: str) -> None:
@@ -53,8 +60,15 @@ def load_state(symbol: str) -> dict:
         return {}
 
 
-def save_state(symbol: str, reference_price: float = None, avg_cost: float = None, position_qty: float = None) -> None:
-    """将 reference_price、avg_cost、position_qty 同步写入 .monitor_ref.json。"""
+def save_state(
+    symbol: str,
+    reference_price: float = None,
+    avg_cost: float = None,
+    position_qty: float = None,
+    last_order_time: float = None,
+    last_trade_side: str = None,
+) -> None:
+    """将 reference_price、avg_cost、position_qty、last_order_time、last_trade_side 同步写入 .monitor_ref.json。"""
     try:
         data = json.loads(MONITOR_REF_FILE.read_text(encoding="utf-8")) if MONITOR_REF_FILE.exists() else {}
     except Exception:
@@ -67,6 +81,10 @@ def save_state(symbol: str, reference_price: float = None, avg_cost: float = Non
         data[symbol]["avg_cost"] = avg_cost
     if position_qty is not None:
         data[symbol]["position_qty"] = position_qty
+    if last_order_time is not None:
+        data[symbol]["last_order_time"] = last_order_time
+    if last_trade_side is not None:
+        data[symbol]["last_trade_side"] = last_trade_side
     MONITOR_REF_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     _log("已持久化 .monitor_ref.json: %s reference_price=%s avg_cost=%s position_qty=%s" % (symbol, reference_price, avg_cost, position_qty))
 
@@ -178,6 +196,24 @@ def sell_profit_ok(price: float, avg_cost: float) -> bool:
     return ok
 
 
+def check_execution_quality(exec_price: float, fill_price: float, threshold_pct: float, pause_sec: float) -> None:
+    """记录成交价与下单时均价偏差；连续 3 次超阈值则暂停 pause_sec 秒。"""
+    global _consecutive_bad_exec
+    if exec_price <= 0:
+        return
+    deviation_pct = (fill_price - exec_price) / exec_price * 100
+    _log(f"  成交质量: 下单时均价={exec_price:.4f} 成交价={fill_price:.4f} 偏差={deviation_pct:+.3f}%")
+    if abs(deviation_pct) > threshold_pct:
+        _consecutive_bad_exec += 1
+        _log(f"  成交价偏差超过阈值 {threshold_pct}%，当前连续次数={_consecutive_bad_exec}")
+        if _consecutive_bad_exec >= 3:
+            _log("  成交价偏差连续 3 次超阈值，自动暂停 %d 分钟以避开剧烈波动" % (pause_sec / 60))
+            time.sleep(pause_sec)
+            _consecutive_bad_exec = 0
+    else:
+        _consecutive_bad_exec = 0
+
+
 def wait_for_order_fill(broker, order, timeout_sec: float = 30, poll_interval: float = 2):
     """下单后轮询订单状态直到成交/撤单/拒单或超时。返回更新后的 order。"""
     from src.execution.order import OrderState
@@ -208,6 +244,10 @@ def main():
     parser.add_argument("--buy-amount-usdt", type=float, default=50.0, help="每次买入固定 USDT")
     parser.add_argument("--min-buy-usdt", type=float, default=10.0, help="低于此金额(USDT)不下单")
     parser.add_argument("--max-slippage", type=float, default=MAX_SLIPPAGE, help="市价保护：价差上限")
+    parser.add_argument("--cooldown-sec", type=float, default=COOLDOWN_SEC_DEFAULT, help="同币种两次下单最小间隔(秒)")
+    parser.add_argument("--sell-fee-compensation-pct", type=float, default=SELL_FEE_COMP_PCT_DEFAULT, help="上一笔买入后卖出时额外触发比例%%(手续费补偿)")
+    parser.add_argument("--exec-quality-threshold-pct", type=float, default=EXEC_QUALITY_THRESHOLD_PCT, help="成交价与下单时均价偏差超此%%计为不良")
+    parser.add_argument("--exec-pause-sec", type=float, default=EXEC_PAUSE_SEC_DEFAULT, help="连续3次不良后自动暂停秒数")
     args = parser.parse_args()
 
     from src.strategy import SimpleThresholdStrategy
@@ -227,6 +267,8 @@ def main():
     ref_price = state.get("reference_price")
     avg_cost = state.get("avg_cost")  # 持仓成本，与文档一致
     position_qty = state.get("position_qty", 0) or 0
+    last_order_time = state.get("last_order_time") or 0
+    last_trade_side = state.get("last_trade_side") or ""
 
     strategy = SimpleThresholdStrategy(ratio_pct=args.ratio, reference_price=ref_price)
 
@@ -263,6 +305,12 @@ def main():
         return 1
 
     text, direction, new_ref = strategy.recommend(price)
+    # 非对称比例：上一笔是买入时，卖出需额外涨幅（手续费补偿）才触发
+    if direction == SignalDirection.FLAT and last_trade_side == "buy" and ref_price and ref_price > 0:
+        min_sell_ratio = (args.ratio + args.sell_fee_compensation_pct) / 100.0
+        if price < ref_price * (1 + min_sell_ratio):
+            direction = None
+            text = "涨幅未达比例+手续费补偿，观望（上一笔为买入，需多涨 %.2f%% 再卖）" % (args.sell_fee_compensation_pct,)
     _log(f"推荐: {text}")
 
     executed = False
@@ -270,79 +318,85 @@ def main():
         _log(f"操作方向: {'卖出' if direction == SignalDirection.FLAT else '买入'}")
 
         if args.execute and broker is not None:
-            # 三秒价格确认：每隔 1 秒取样，共 3 次
-            _log("开始三秒价格确认（每隔 1 秒取样，共 3 次）...")
-            exec_price, _std, is_spike = fetch_three_price_samples(broker, args.symbol, PRICE_SAMPLE_INTERVAL, PRICE_SAMPLES)
-            if exec_price is None or is_spike:
-                _log("插针判定: 3 次均价标准差 > 0.1%，取消本次下单")
+            elapsed = time.time() - last_order_time
+            if elapsed < args.cooldown_sec:
+                _log("冷静期未满，跳过本次下单（距上次 %.1f 秒，需至少 %.0f 秒）" % (elapsed, args.cooldown_sec))
             else:
-                account = broker.get_account()
-                # 市价保护
-                if not check_slippage_ok(broker, args.symbol, args.max_slippage):
-                    _log("市价保护: 买一卖一价差过大，暂缓下单")
+                # 三秒价格确认：每隔 1 秒取样，共 3 次
+                _log("开始三秒价格确认（每隔 1 秒取样，共 3 次）...")
+                exec_price, _std, is_spike = fetch_three_price_samples(broker, args.symbol, PRICE_SAMPLE_INTERVAL, PRICE_SAMPLES)
+                if exec_price is None or is_spike:
+                    _log("插针判定: 3 次均价标准差 > 0.1%，取消本次下单")
                 else:
-                    if direction == SignalDirection.LONG:
-                        amount_usdt = min(args.buy_amount_usdt, account.cash * 0.98)
-                        if amount_usdt >= args.min_buy_usdt:
-                            qty = amount_usdt / exec_price
-                            try:
-                                order = broker.submit_order(args.symbol, OrderSide.BUY, qty, price=None, reason=text)
-                                if not order.is_done():
-                                    order = wait_for_order_fill(broker, order, timeout_sec=30, poll_interval=2)
-                                if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
-                                    fill_qty = order.filled_quantity
-                                    fill_price = order.filled_avg_price
-                                    fee_est = fill_qty * fill_price * args.taker_fee_rate
-                                    session_start, cum_fee = load_session_pnl()
-                                    if session_start is not None:
-                                        save_session_pnl(session_start, cum_fee + fee_est)
-                                    if position_qty and avg_cost:
-                                        new_avg = (avg_cost * position_qty + fill_price * fill_qty) / (position_qty + fill_qty)
-                                        new_qty = position_qty + fill_qty
-                                    else:
-                                        new_avg = fill_price
-                                        new_qty = fill_qty
-                                    save_state(args.symbol, reference_price=new_ref, avg_cost=new_avg, position_qty=new_qty)
-                                    _log(f"买入成交: 数量={fill_qty} 成交价={fill_price:.2f} 成交额={fill_qty * fill_price:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT 更新持仓成本={new_avg:.4f} 持仓量={new_qty}")
-                                    executed = True
-                                else:
-                                    _log(f"下单结果: {order.state} {order.reason or ''}")
-                            except Exception as e:
-                                _log(f"下单异常: {e}")
-                        else:
-                            _log("余额不足或低于最小下单额，未下单（可用 USDT=%.2f 需>=%.2f）" % (account.cash, args.min_buy_usdt))
+                    account = broker.get_account()
+                    # 市价保护
+                    if not check_slippage_ok(broker, args.symbol, args.max_slippage):
+                        _log("市价保护: 买一卖一价差过大，暂缓下单")
                     else:
-                        # 卖出：盈利硬约束 (当前价 - avg_cost) / avg_cost > 0.003
-                        if not sell_profit_ok(exec_price, avg_cost):
-                            _log("卖出跳过: 扣费后利润未达 0.3%，不卖出")
-                        else:
-                            pos = account.positions.get(args.symbol)
-                            if pos and pos.quantity > 0:
+                        if direction == SignalDirection.LONG:
+                            amount_usdt = min(args.buy_amount_usdt, account.cash * 0.98)
+                            if amount_usdt >= args.min_buy_usdt:
+                                qty = amount_usdt / exec_price
                                 try:
-                                    order = broker.submit_order(args.symbol, OrderSide.SELL, pos.quantity, price=None, reason=text)
+                                    order = broker.submit_order(args.symbol, OrderSide.BUY, qty, price=None, reason=text)
                                     if not order.is_done():
                                         order = wait_for_order_fill(broker, order, timeout_sec=30, poll_interval=2)
                                     if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
-                                        sell_price = order.filled_avg_price
-                                        sell_qty = order.filled_quantity
-                                        trade_value = sell_qty * sell_price
-                                        fee_est = trade_value * args.taker_fee_rate
+                                        fill_qty = order.filled_quantity
+                                        fill_price = order.filled_avg_price
+                                        fee_est = fill_qty * fill_price * args.taker_fee_rate
                                         session_start, cum_fee = load_session_pnl()
                                         if session_start is not None:
                                             save_session_pnl(session_start, cum_fee + fee_est)
-                                        avg = avg_cost or sell_price
-                                        expected_return_pct = (sell_price - avg) / avg * 100
-                                        after_fee_return_pct = expected_return_pct - 2 * args.taker_fee_rate * 100
-                                        _log(f"卖出成交: 数量={sell_qty} 成交价={sell_price:.2f} 成交额={trade_value:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT")
-                                        _log(f"预期收益率: {expected_return_pct:.2f}%  |  扣费后收益: {after_fee_return_pct:.2f}%")
-                                        save_state(args.symbol, reference_price=new_ref, avg_cost=None, position_qty=0.0)
+                                        if position_qty and avg_cost:
+                                            new_avg = (avg_cost * position_qty + fill_price * fill_qty) / (position_qty + fill_qty)
+                                            new_qty = position_qty + fill_qty
+                                        else:
+                                            new_avg = fill_price
+                                            new_qty = fill_qty
+                                        save_state(args.symbol, reference_price=new_ref, avg_cost=new_avg, position_qty=new_qty, last_order_time=time.time(), last_trade_side="buy")
+                                        check_execution_quality(exec_price, fill_price, args.exec_quality_threshold_pct, args.exec_pause_sec)
+                                        _log(f"买入成交: 数量={fill_qty} 成交价={fill_price:.2f} 成交额={fill_qty * fill_price:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT 更新持仓成本={new_avg:.4f} 持仓量={new_qty}")
                                         executed = True
                                     else:
                                         _log(f"下单结果: {order.state} {order.reason or ''}")
                                 except Exception as e:
                                     _log(f"下单异常: {e}")
                             else:
-                                _log("无该币种持仓，未下单")
+                                _log("余额不足或低于最小下单额，未下单（可用 USDT=%.2f 需>=%.2f）" % (account.cash, args.min_buy_usdt))
+                        else:
+                            # 卖出：盈利硬约束 (当前价 - avg_cost) / avg_cost > 0.003
+                            if not sell_profit_ok(exec_price, avg_cost):
+                                _log("卖出跳过: 扣费后利润未达 0.3%，不卖出")
+                            else:
+                                pos = account.positions.get(args.symbol)
+                                if pos and pos.quantity > 0:
+                                    try:
+                                        order = broker.submit_order(args.symbol, OrderSide.SELL, pos.quantity, price=None, reason=text)
+                                        if not order.is_done():
+                                            order = wait_for_order_fill(broker, order, timeout_sec=30, poll_interval=2)
+                                        if order.state == OrderState.FILLED and order.filled_quantity and order.filled_avg_price:
+                                            sell_price = order.filled_avg_price
+                                            sell_qty = order.filled_quantity
+                                            trade_value = sell_qty * sell_price
+                                            fee_est = trade_value * args.taker_fee_rate
+                                            session_start, cum_fee = load_session_pnl()
+                                            if session_start is not None:
+                                                save_session_pnl(session_start, cum_fee + fee_est)
+                                            avg = avg_cost or sell_price
+                                            expected_return_pct = (sell_price - avg) / avg * 100
+                                            after_fee_return_pct = expected_return_pct - 2 * args.taker_fee_rate * 100
+                                            _log(f"卖出成交: 数量={sell_qty} 成交价={sell_price:.2f} 成交额={trade_value:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT")
+                                            _log(f"预期收益率: {expected_return_pct:.2f}%  |  扣费后收益: {after_fee_return_pct:.2f}%")
+                                            save_state(args.symbol, reference_price=new_ref, avg_cost=None, position_qty=0.0, last_order_time=time.time(), last_trade_side="sell")
+                                            check_execution_quality(exec_price, sell_price, args.exec_quality_threshold_pct, args.exec_pause_sec)
+                                            executed = True
+                                        else:
+                                            _log(f"下单结果: {order.state} {order.reason or ''}")
+                                    except Exception as e:
+                                        _log(f"下单异常: {e}")
+                                else:
+                                    _log("无该币种持仓，未下单")
 
     if direction is not None and not executed:
         # 本周期已建议买卖但未成交（PENDING/余额不足/插针/滑点），仍更新参考价，避免下一周期重复触发同向信号
