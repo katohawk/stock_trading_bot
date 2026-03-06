@@ -24,7 +24,7 @@ stock_trading_bot/
 ├── run_backtest.py       # 股票回测
 ├── run_live.py           # 股票模拟/实盘
 ├── run_crypto_backtest.py # 加密货币网格回测
-├── run_monitor.py        # 定时监控：涨卖跌买只推荐不下单
+├── run_monitor.py        # 定时监控：涨卖跌买只推荐不下单，--push 支持企业微信/钉钉/飞书（交易手动）
 ├── run_binance_live.py   # 币安现货：监控+可选实盘下单
 ├── run_okx_live.py       # OKX（欧易）现货：监控+可选实盘下单
 └── src/
@@ -169,7 +169,9 @@ python run_live.py
 - **定时监控**（只推荐、不自动下单）：
   ```bash
   python run_monitor.py --symbol BTC-USD --ratio 1          # 一次
+  python run_monitor.py --symbol 000001.SZ --ratio 1 --interval 300 --push wecom   # A 股 + 每 5 分钟 + 推送到企业微信（交易需手动）
   python run_monitor.py --symbol AAPL --ratio 0.5 --interval 300   # 每 300 秒跑一次
+  # --push 可选：wecom / dingtalk / feishu / serverchan / bark / webhook，见 docs/monitor_push_manual_trade.md
   ```
   参考价保存在 `.monitor_ref.json`，下次比较用。
 - **推荐服务**：数据（yfinance/交易所）、执行（券商/交易所 API）、定时（cron / `--interval` / 云函数）、通知（邮件/Telegram/钉钉）见 [docs/recommended_services.md](docs/recommended_services.md)。
