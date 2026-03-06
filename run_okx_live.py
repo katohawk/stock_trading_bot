@@ -41,7 +41,13 @@ def load_state(symbol: str) -> dict:
         return {}
     try:
         data = json.loads(MONITOR_REF_FILE.read_text(encoding="utf-8"))
-        return data.get(symbol) or {}
+        raw = data.get(symbol)
+        if isinstance(raw, dict):
+            return raw
+        # 旧格式或误存为数字等：只保留 reference_price 或视为空
+        if raw is not None and isinstance(raw, (int, float)):
+            return {"reference_price": float(raw)}
+        return {}
     except Exception as e:
         _log(f"读取 .monitor_ref.json 失败: {e}")
         return {}
@@ -53,7 +59,7 @@ def save_state(symbol: str, reference_price: float = None, avg_cost: float = Non
         data = json.loads(MONITOR_REF_FILE.read_text(encoding="utf-8")) if MONITOR_REF_FILE.exists() else {}
     except Exception:
         data = {}
-    if symbol not in data:
+    if symbol not in data or not isinstance(data[symbol], dict):
         data[symbol] = {}
     if reference_price is not None:
         data[symbol]["reference_price"] = reference_price
