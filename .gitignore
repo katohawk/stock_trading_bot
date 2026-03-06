@@ -1,4 +1,6 @@
 .monitor_ref.json
+.session_pnl.json
+.okx_state.json
 *.pyc
 __pycache__/
 .venv/

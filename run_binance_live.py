@@ -3,8 +3,8 @@
 币安现货：定时监控 + 涨卖跌买。可只推荐，也可实盘下单（需配置 API）。
 环境变量：BINANCE_API_KEY, BINANCE_API_SECRET（实盘下单时必填）
 用法：
-  python run_binance_live.py --symbol BTC/USDT --ratio 1 --interval 300   # 每 5 分钟检查，只推荐
-  python run_binance_live.py --symbol BTC/USDT --ratio 1 --execute         # 一次检查并真实下单（慎用）
+  python run_binance_live.py --symbol BTC/USDT --interval 300   # 默认 0.5%%，只推荐
+  python run_binance_live.py --symbol BTC/USDT --execute         # 真实下单（慎用）
 """
 import argparse
 import os
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def main():
     parser = argparse.ArgumentParser(description="币安：涨卖跌买监控，可选实盘下单")
     parser.add_argument("--symbol", default="BTC/USDT", help="交易对，如 BTC/USDT")
-    parser.add_argument("--ratio", type=float, default=1.0, help="触发比例%%")
+    parser.add_argument("--ratio", type=float, default=0.5, help="触发比例%%，默认 0.5 适合比特币等")
     parser.add_argument("--interval", type=float, default=0, help="循环间隔秒，0 表示只跑一次")
     parser.add_argument("--execute", action="store_true", help="是否真实下单（否则只打印推荐）")
     parser.add_argument("--testnet", action="store_true", help="使用币安测试网")
