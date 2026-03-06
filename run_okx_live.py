@@ -90,7 +90,18 @@ def save_state(
 
 
 def get_price_from_okx(broker, symbol: str) -> float:
+    """优先用公开 ticker 接口（不触发 load_markets），避免 ccxt 解析 None 币种报错。"""
     ex = broker._get_exchange()
+    try:
+        inst_id = symbol.replace("/", "-")
+        res = ex.public_get_market_ticker(params={"instId": inst_id})
+        if res.get("code") == "0" and res.get("data"):
+            d = res["data"][0]
+            last = d.get("last") or d.get("lastPx") or d.get("lastPx") or 0
+            if last:
+                return float(last)
+    except Exception:
+        pass
     ticker = ex.fetch_ticker(symbol)
     return float(ticker.get("last") or ticker.get("close") or 0)
 
@@ -274,27 +285,40 @@ def main():
 
     broker = None
     if api_key and api_secret and passphrase:
-        try:
-            broker = OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase, demo=args.demo)
-            account = broker.get_account()
-            price = get_price_from_okx_with_retry(broker, args.symbol)
-            session_start, cumulative_fee = load_session_pnl()
-            if session_start is None:
-                session_start = account.equity
-                save_session_pnl(session_start, cumulative_fee)
-            # 启动时与交易所持仓同步：本地无持仓但交易所有仓位时，用交易所数量与当前价补全
-            pos = account.positions.get(args.symbol)
-            if pos and (pos.quantity or 0) > 0 and not (position_qty or 0):
-                position_qty = pos.quantity
-                if not avg_cost or avg_cost <= 0:
-                    avg_cost = price
-                save_state(args.symbol, position_qty=position_qty, avg_cost=avg_cost)
-                _log("已从交易所同步持仓: 数量=%s 成本(估)=%.4f" % (position_qty, avg_cost))
-            pnl = account.equity - session_start
-            net_pnl = pnl - cumulative_fee
-            _log(f"{args.symbol} 当前价={price:.4f} 权益={account.equity:.2f} USDT 本次运行收益={pnl:+.2f} USDT 累计手续费(估)={cumulative_fee:.2f} USDT 净收益={net_pnl:+.2f} USDT")
-        except Exception as e:
-            _log(f"OKX API 失败: {e}")
+        api_ok = False
+        for attempt in range(2):
+            try:
+                broker = broker or OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase, demo=args.demo)
+                account = broker.get_account()
+                price = get_price_from_okx_with_retry(broker, args.symbol)
+                session_start, cumulative_fee = load_session_pnl()
+                if session_start is None:
+                    session_start = account.equity
+                    save_session_pnl(session_start, cumulative_fee)
+                pos = account.positions.get(args.symbol)
+                if pos and (pos.quantity or 0) > 0 and not (position_qty or 0):
+                    position_qty = pos.quantity
+                    if not avg_cost or avg_cost <= 0:
+                        avg_cost = price
+                    save_state(args.symbol, position_qty=position_qty, avg_cost=avg_cost)
+                    _log("已从交易所同步持仓: 数量=%s 成本(估)=%.4f" % (position_qty, avg_cost))
+                pnl = account.equity - session_start
+                net_pnl = pnl - cumulative_fee
+                _log(f"{args.symbol} 当前价={price:.4f} 权益={account.equity:.2f} USDT 本次运行收益={pnl:+.2f} USDT 累计手续费(估)={cumulative_fee:.2f} USDT 净收益={net_pnl:+.2f} USDT")
+                api_ok = True
+                break
+            except TypeError as e:
+                err_msg = str(e)
+                if "NoneType" in err_msg and "str" in err_msg and attempt == 0:
+                    _log("OKX/ccxt 解析返回遇到 None 币种(已知兼容问题)，3 秒后重试...")
+                    time.sleep(3)
+                else:
+                    _log("OKX API 失败: %s" % err_msg)
+                    return 1
+            except Exception as e:
+                _log("OKX API 失败: %s" % e)
+                return 1
+        if not api_ok:
             return 1
     else:
         price = get_price_fallback(args.symbol)

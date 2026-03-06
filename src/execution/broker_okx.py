@@ -55,6 +55,8 @@ class OKXBroker(BrokerBase):
         if self.demo:
             self._exchange.options["defaultType"] = "spot"
             self._exchange.headers["x-simulated-trading"] = "1"
+        # 避免 OKX 返回中 None 币种导致 ccxt parse_market 报错 (NoneType + str)
+        self._exchange.options["loadMarkets"] = False
         return self._exchange
 
     def submit_order(
@@ -133,7 +135,26 @@ class OKXBroker(BrokerBase):
 
     def get_account(self) -> AccountState:
         ex = self._get_exchange()
-        bal = ex.fetch_balance()
+        bal = None
+        try:
+            bal = ex.fetch_balance()
+        except TypeError as e:
+            err = str(e)
+            if "NoneType" in err and "str" in err:
+                try:
+                    old_load = ex.options.get("loadMarkets")
+                    ex.options["loadMarkets"] = False
+                    bal = ex.fetch_balance()
+                except Exception:
+                    bal = self._fetch_balance_fallback(ex)
+                    if bal and bal.get("total"):
+                        ex.options["loadMarkets"] = False
+                finally:
+                    ex.options["loadMarkets"] = old_load
+            else:
+                raise
+        if bal is None:
+            bal = {"total": {}}
         cash = 0.0
         positions = {}
         totals = bal.get("total") or {}
@@ -162,6 +183,30 @@ class OKXBroker(BrokerBase):
             )
         equity = cash + sum(p.quantity * p.current_price for p in positions.values())
         return AccountState(cash=cash, positions=positions, equity=equity)
+
+    def _fetch_balance_fallback(self, ex) -> dict:
+        """当 fetch_balance 因 ccxt 解析 None 报错时，直接调 OKX 账户接口拿余额。"""
+        try:
+            # OKX v5: GET /api/v5/account/balance
+            res = ex.private_get_account_balance()
+            if res.get("code") != "0":
+                return {"total": {}}
+            data = res.get("data") or []
+            if not data:
+                return {"total": {}}
+            details = (data[0] or {}).get("details") or []
+            total = {}
+            for d in details:
+                ccy = (d.get("ccy") or "").strip().upper()
+                if not ccy:
+                    continue
+                eq = float(d.get("eq") or d.get("cashBal") or d.get("availBal") or 0)
+                if ccy not in total:
+                    total[ccy] = 0.0
+                total[ccy] += eq
+            return {"total": total}
+        except Exception:
+            return {"total": {}}
 
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Order]:
         ex = self._get_exchange()
