@@ -349,6 +349,9 @@ def main():
     if (position_qty or 0) < DUST_QTY:
         ref_hint = f"参考价={ref_price:.2f}" if ref_price else "参考价=当前价"
         _log(f"当前状态: 仅 USDT，等待跌 {args.ratio}% 触发买入（{ref_hint}）")
+        if ref_price and ref_price > 0:
+            buy_trigger = ref_price * (1 - args.ratio / 100.0)
+            _log(f"  买入触发价={buy_trigger:.2f}（当前价≤此价才买），当前价={price:.2f}")
     else:
         cost_hint = f"成本约={avg_cost:.2f}" if avg_cost else ""
         _log(f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {args.ratio}% 触发卖出（{cost_hint}）")
