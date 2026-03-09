@@ -147,14 +147,26 @@ def fetch_three_price_samples(broker, symbol: str, sample_interval: float = PRIC
 
 
 def get_bid_ask(broker, symbol: str) -> tuple:
-    """获取买一卖一价，返回 (bid1, ask1)。"""
+    """获取买一卖一价，返回 (bid1, ask1)。用公开接口避免 load_markets 触发 None 解析。"""
     ex = broker._get_exchange()
-    ob = ex.fetch_order_book(symbol, limit=1)
-    bids = ob.get("bids") or []
-    asks = ob.get("asks") or []
-    bid1 = float(bids[0][0]) if bids else 0.0
-    ask1 = float(asks[0][0]) if asks else 0.0
-    return bid1, ask1
+    try:
+        inst_id = symbol.replace("/", "-")
+        res = ex.public_get_market_books(params={"instId": inst_id, "sz": "1"})
+        if res.get("code") != "0" or not res.get("data"):
+            raise ValueError("no data")
+        item = res["data"][0]
+        bids = item.get("bids") or []
+        asks = item.get("asks") or []
+        bid1 = float(bids[0][0]) if bids else 0.0
+        ask1 = float(asks[0][0]) if asks else 0.0
+        return bid1, ask1
+    except Exception:
+        ob = ex.fetch_order_book(symbol, limit=1)
+        bids = ob.get("bids") or []
+        asks = ob.get("asks") or []
+        bid1 = float(bids[0][0]) if bids else 0.0
+        ask1 = float(asks[0][0]) if asks else 0.0
+        return bid1, ask1
 
 
 def check_slippage_ok(broker, symbol: str, max_slippage: float = MAX_SLIPPAGE) -> bool:

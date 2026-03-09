@@ -57,7 +57,49 @@ class OKXBroker(BrokerBase):
             self._exchange.headers["x-simulated-trading"] = "1"
         # 避免 OKX 返回中 None 币种导致 ccxt parse_market 报错 (NoneType + str)
         self._exchange.options["loadMarkets"] = False
+        self._apply_load_markets_fallback()
         return self._exchange
+
+    def _apply_load_markets_fallback(self):
+        """当 load_markets 因 OKX 返回 None 币种报错时，改为“不加载市场”并让 market(symbol) 返回最小占位。"""
+        ex = self._exchange
+        _original_load_markets = ex.load_markets
+        _original_market = ex.market
+
+        def _patched_load_markets():
+            if getattr(ex, "_ccxt_okx_no_parse_markets", False):
+                return
+            try:
+                _original_load_markets()
+            except TypeError as e:
+                if "NoneType" in str(e) and "str" in str(e):
+                    ex.markets = {}
+                    ex.markets_by_id = {}
+                    ex._ccxt_okx_no_parse_markets = True
+                else:
+                    raise
+
+        def _minimal_market(symbol: str) -> dict:
+            parts = symbol.split("/") if "/" in symbol else (symbol, "USDT")
+            base, quote = parts[0], parts[1] if len(parts) > 1 else "USDT"
+            inst_id = base + "-" + quote
+            return {
+                "id": inst_id,
+                "symbol": symbol,
+                "base": base,
+                "quote": quote,
+                "spot": True,
+                "contract": False,
+                "precision": {"amount": 8, "price": 8},
+            }
+
+        def _patched_market(symbol: str):
+            if getattr(ex, "_ccxt_okx_no_parse_markets", False):
+                return _minimal_market(symbol)
+            return _original_market(symbol)
+
+        ex.load_markets = _patched_load_markets
+        ex.market = _patched_market
 
     def submit_order(
         self,

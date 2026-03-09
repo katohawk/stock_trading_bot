@@ -1,0 +1,110 @@
+(function () {
+  const statusPill = document.getElementById("statusPill");
+  const btnStart = document.getElementById("btnStart");
+  const btnStop = document.getElementById("btnStop");
+  const retryHint = document.getElementById("retryHint");
+  const paramsForm = document.getElementById("paramsForm");
+  const logEl = document.getElementById("log");
+
+  function setRunning(running) {
+    statusPill.textContent = running ? "运行中" : "已停止";
+    statusPill.classList.toggle("running", running);
+    btnStart.disabled = running;
+    btnStop.disabled = !running;
+  }
+
+  function getFormParams() {
+    const fd = new FormData(paramsForm);
+    return {
+      symbol: (fd.get("symbol") || "BTC/USDT").trim(),
+      ratio: parseFloat(fd.get("ratio")) || 0.5,
+      interval: parseFloat(fd.get("interval")) || 60,
+      cooldown_sec: parseFloat(fd.get("cooldown_sec")) || 60,
+      buy_amount_usdt: parseFloat(fd.get("buy_amount_usdt")) || 50,
+      min_buy_usdt: parseFloat(fd.get("min_buy_usdt")) || 10,
+      execute: fd.get("execute") === "on",
+      demo: fd.get("demo") === "on",
+    };
+  }
+
+  function setFormParams(p) {
+    if (!p) return;
+    const set = (name, value) => {
+      const el = paramsForm.elements[name];
+      if (el) el.value = value;
+    };
+    const setCheck = (name, value) => {
+      const el = paramsForm.elements[name];
+      if (el) el.checked = !!value;
+    };
+    set("symbol", p.symbol);
+    set("ratio", p.ratio);
+    set("interval", p.interval);
+    set("cooldown_sec", p.cooldown_sec);
+    set("buy_amount_usdt", p.buy_amount_usdt);
+    set("min_buy_usdt", p.min_buy_usdt);
+    setCheck("execute", p.execute);
+    setCheck("demo", p.demo);
+  }
+
+  async function fetchStatus() {
+    const r = await fetch("/api/status");
+    const d = await r.json();
+    setRunning(d.running);
+    setFormParams(d.params);
+    if (d.retry_count > 0) {
+      retryHint.textContent = `自动重试: ${d.retry_count} / ${d.max_auto_retries}`;
+    } else {
+      retryHint.textContent = "";
+    }
+    return d;
+  }
+
+  function appendLog(line) {
+    logEl.appendChild(document.createTextNode(line));
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function connectLogStream() {
+    const es = new EventSource("/api/logs/stream");
+    es.onmessage = function (e) {
+      try {
+        const d = JSON.parse(e.data);
+        if (d.line) appendLog(d.line);
+      } catch (_) {}
+    };
+    es.onerror = function () {
+      es.close();
+      setTimeout(connectLogStream, 2000);
+    };
+  }
+
+  btnStart.addEventListener("click", async () => {
+    const params = getFormParams();
+    const r = await fetch("/api/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      setRunning(true);
+      appendLog("[系统] 启动请求已发送\n");
+    } else {
+      appendLog("[系统] " + (d.message || "启动失败") + "\n");
+    }
+  });
+
+  btnStop.addEventListener("click", async () => {
+    const r = await fetch("/api/stop", { method: "POST" });
+    const d = await r.json();
+    if (d.ok) {
+      setRunning(false);
+      appendLog("[系统] 已发送暂停请求\n");
+    }
+  });
+
+  setInterval(fetchStatus, 2000);
+  fetchStatus();
+  connectLogStream();
+})();
