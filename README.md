@@ -61,6 +61,18 @@ python server.py --port 5555
 
 浏览器打开 http://127.0.0.1:5555/：启动/暂停、改交易对与参数、看实时日志；未配置 API 时先到「API 配置」填写。
 
+如需让 Web 控制台在异常退出后自动重启，最多重启 3 次：
+
+```bash
+chmod +x scripts/run_server_supervised.sh scripts/stop_server_supervised.sh
+nohup ./scripts/run_server_supervised.sh > /dev/null 2>&1 &
+```
+
+默认监听 `0.0.0.0:5555`，异常退出后每 10 秒重启一次，最多重启 3 次。日志文件：
+
+- `logs/server.log`
+- `logs/server_supervisor.log`
+
 ### 3. 命令行单次 / 轮询
 
 | 用途 | 命令 |

@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.server.log
+.server.pid
+.server_supervisor.pid
+logs/
