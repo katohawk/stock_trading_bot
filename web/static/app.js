@@ -17,7 +17,8 @@
     const fd = new FormData(paramsForm);
     return {
       symbol: (fd.get("symbol") || "BTC/USDT").trim(),
-      ratio: parseFloat(fd.get("ratio")) || 0.5,
+      ratio: parseFloat(fd.get("ratio")) || 0.35,
+      sell_fee_compensation_pct: parseFloat(fd.get("sell_fee_compensation_pct")) || 0.15,
       interval: parseFloat(fd.get("interval")) || 60,
       cooldown_sec: parseFloat(fd.get("cooldown_sec")) || 60,
       buy_amount_usdt: parseFloat(fd.get("buy_amount_usdt")) || 50,
@@ -37,6 +38,7 @@
     };
     set("symbol", p.symbol);
     set("ratio", p.ratio);
+    set("sell_fee_compensation_pct", p.sell_fee_compensation_pct);
     set("interval", p.interval);
     set("cooldown_sec", p.cooldown_sec);
     set("buy_amount_usdt", p.buy_amount_usdt);

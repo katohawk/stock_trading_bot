@@ -44,14 +44,14 @@ retry_timer: threading.Timer = None
 
 DEFAULT_PARAMS = {
     "symbol": "BTC/USDT",
-    "ratio": 0.5,
+    "ratio": 0.35,
     "interval": 60,
     "taker_fee_rate": 0.001,
     "buy_amount_usdt": 50.0,
     "min_buy_usdt": 10.0,
     "max_slippage": 0.001,
     "cooldown_sec": 60,
-    "sell_fee_compensation_pct": 0.2,
+    "sell_fee_compensation_pct": 0.15,
     "exec_quality_threshold_pct": 0.1,
     "exec_pause_sec": 300,
 }
