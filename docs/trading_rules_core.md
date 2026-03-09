@@ -60,7 +60,6 @@
 |------|------|------|
 | --symbol | 交易对 | BTC/USDT |
 | --ratio | 触发比例（%） | 0.5 |
-| --execute | 是否真实下单 | 否 |
 | --interval | 轮询间隔（秒），0 表示只跑一次 | 0 |
 | --taker-fee-rate | 吃单费率 | 0.001 |
 | --buy-amount-usdt | 每次买入固定 USDT 金额 | 50 |

@@ -1,5 +1,5 @@
 """
-加密货币 K 线：通过 ccxt 拉取交易所历史数据（如 Binance、OKX）。
+加密货币 K 线：通过 ccxt 拉取交易所历史数据（如 OKX）。
 支持 1m/5m/15m/1h/1d，便于高抛低吸的快速周期。
 """
 from datetime import datetime
@@ -23,13 +23,13 @@ CCXT_TIMEFRAME_MAP = {
 class CryptoAdapter(DataAdapterBase):
     """
     通过 ccxt 拉取加密货币 K 线。
-    exchange_id: 如 'binance', 'okx'
+    exchange_id: 如 'okx'
     symbol: 如 'BTC/USDT', 'ETH/USDT'
     """
 
     def __init__(
         self,
-        exchange_id: str = "binance",
+        exchange_id: str = "okx",
         symbols: List[str] | None = None,
         api_key: str | None = None,
         api_secret: str | None = None,

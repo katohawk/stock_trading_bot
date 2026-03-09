@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 加密货币（如 BTC）网格策略回测：高抛低吸、快速周期。
-数据源：优先 ccxt（Binance 等），若无则用 yfinance BTC-USD 日线演示。
+数据源：优先 ccxt（OKX），若无则用 yfinance BTC-USD 日线演示。
 """
 import sys
 from pathlib import Path
@@ -20,7 +20,7 @@ def load_crypto_bars(symbol: str, start: datetime, end: datetime, freq: str):
     """优先 ccxt，失败则用 yfinance BTC-USD。"""
     try:
         from src.data import CryptoAdapter
-        adapter = CryptoAdapter(exchange_id="binance", symbols=[symbol])
+        adapter = CryptoAdapter(exchange_id="okx", symbols=[symbol])
         return adapter.get_bars(symbol, start, end, freq=freq)
     except Exception as e:
         print(f"ccxt 不可用 ({e})，改用 yfinance BTC-USD 日线演示")

@@ -30,7 +30,7 @@
 
 **入口**：就像 Java 的 `main(String[] args)`，这里是 `main()`，参数用 `argparse` 从命令行读（类似 `process.argv` 的解析库）。**跑一次** = 调一次 `main()`；`--interval 60` 就是每 60 秒再调一次 `main()`。
 
-**程序流程一句话**：读 `.monitor_ref.json`（参考价、持仓成本）→ 向 OKX 取当前价 → 策略 `recommend(price)` 得到买/卖/观望 → 若是买/卖且 `--execute`，先做三秒价格确认、滑点检查，卖出再检查利润 > 0.3% → 调 `broker.submit_order` 下单 → 成交后把最新参考价、持仓成本写回 `.monitor_ref.json`。下面正文里的「Python 小知识」可以对照上表看。
+**程序流程一句话**：读 `.monitor_ref.json`（参考价、持仓成本）→ 向 OKX 取当前价 → 策略 `recommend(price)` 得到买/卖/观望 → 若是买/卖则先做三秒价格确认、滑点检查，卖出再检查利润 > 0.3% → 调 `broker.submit_order` 下单 → 成交后把最新参考价、持仓成本写回 `.monitor_ref.json`。下面正文里的「Python 小知识」可以对照上表看。
 
 ---
 
@@ -38,9 +38,8 @@
 
 ```
 stock_trading_bot/
-├── run_okx_live.py      # 你要跑的入口：OKX 涨卖跌买
-├── run_binance_live.py  # 币安版，逻辑类似
-├── run_backtest.py      # 股票回测入口
+├── run_okx_live.py      # 你要跑的入口：OKX 涨卖跌买实盘
+├── run_backtest.py      # 股票回测入口（可选）
 ├── .env                 # API 密钥（不提交）
 ├── .monitor_ref.json    # 参考价、持仓成本、持仓量（运行后生成）
 └── src/
@@ -153,14 +152,13 @@ def main():
     parser = argparse.ArgumentParser(description="OKX：涨卖跌买...")
     parser.add_argument("--symbol", default="BTC/USDT", help="交易对")
     parser.add_argument("--ratio", type=float, default=0.5, help="触发比例%%")
-    parser.add_argument("--execute", action="store_true", help="是否真实下单")
+    # 默认实盘下单，无模拟盘；需在 .env 配置 OKX API
     parser.add_argument("--interval", type=float, default=0, help="轮询间隔秒")
     args = parser.parse_args()
 ```
 
-- `**action="store_true"**`：出现 `--execute` 就是 `True`，不出现就是 `False`。
 - `**type=float**`：自动把命令行字符串转成浮点数。
-- 使用方式：`python run_okx_live.py --symbol BTC/USDT --execute --interval 60`。
+- 使用方式：`python run_okx_live.py --symbol BTC/USDT --interval 60`（配置好 .env 后即实盘下单）。
 
 **Python 小知识**：`argparse` 是标准库，写小工具时非常常用。
 
@@ -193,7 +191,7 @@ text, direction, new_ref = strategy.recommend(price)
 from src.execution import OKXBroker
 from src.execution.order import OrderSide, OrderState
 
-broker = OKXBroker(api_key=..., api_secret=..., passphrase=..., demo=args.demo)
+broker = OKXBroker(api_key=..., api_secret=..., passphrase=...)
 account = broker.get_account()   # 拿账户权益、现金、持仓
 order = broker.submit_order(args.symbol, OrderSide.BUY, qty, price=None, reason=text)
 if order.state == OrderState.FILLED:
@@ -310,7 +308,7 @@ class BrokerBase(ABC):
 - `**ABC**`：抽象基类，不能直接实例化，只能被继承。
 - `**@abstractmethod**`：子类必须实现这些方法，否则会报错。这样「回测」用模拟 Broker、「实盘」用 OKXBroker，接口统一。
 
-**Python 小知识**：用抽象基类定义「契约」，多种实现（OKX、币安、模拟）都遵守同一套接口。
+**Python 小知识**：用抽象基类定义「契约」，OKX 实盘与回测用模拟 Broker 都遵守同一套接口。
 
 ---
 
@@ -349,7 +347,7 @@ class AccountState:
 
 ## 六、数据流小结（配合学 Python）
 
-1. **入口**：`run_okx_live.py` 的 `main()`，用 `argparse` 解析 `--symbol`、`--execute`、`--interval` 等。
+1. **入口**：`run_okx_live.py` 的 `main()`，用 `argparse` 解析 `--symbol`、`--interval` 等。
 2. **状态**：从 `.monitor_ref.json` 用 `load_state(symbol)` 读参考价、持仓成本、持仓量；成交后用 `save_state(...)` 写回，用到 `Path`、`json`、`dict.get`、`isinstance`。
 3. **价格**：通过 `OKXBroker` 拿当前价（或 fallback 到 yfinance），带重试。
 4. **策略**：`SimpleThresholdStrategy.recommend(price)` 返回 (文案, 方向, 新参考价)，用到类、枚举、条件判断。

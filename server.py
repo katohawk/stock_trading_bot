@@ -46,8 +46,6 @@ DEFAULT_PARAMS = {
     "symbol": "BTC/USDT",
     "ratio": 0.5,
     "interval": 60,
-    "execute": False,
-    "demo": False,
     "taker_fee_rate": 0.001,
     "buy_amount_usdt": 50.0,
     "min_buy_usdt": 10.0,
@@ -65,10 +63,6 @@ def params_to_argv(params: dict) -> list:
     cmd += ["--symbol", str(params.get("symbol", "BTC/USDT"))]
     cmd += ["--ratio", str(params.get("ratio", 0.5))]
     cmd += ["--interval", str(params.get("interval", 60))]
-    if params.get("execute"):
-        cmd.append("--execute")
-    if params.get("demo"):
-        cmd.append("--demo")
     cmd += ["--taker-fee-rate", str(params.get("taker_fee_rate", 0.001))]
     cmd += ["--buy-amount-usdt", str(params.get("buy_amount_usdt", 50))]
     cmd += ["--min-buy-usdt", str(params.get("min_buy_usdt", 10))]
@@ -242,9 +236,7 @@ def api_set_params():
     data = request.get_json() or {}
     for k, v in DEFAULT_PARAMS.items():
         if k in data:
-            if k in ("execute", "demo"):
-                current_params[k] = bool(data[k])
-            elif k in ("symbol",):
+            if k in ("symbol",):
                 current_params[k] = str(data[k]).strip() or DEFAULT_PARAMS[k]
             else:
                 try:
@@ -261,9 +253,7 @@ def api_start():
     if data:
         for k, v in DEFAULT_PARAMS.items():
             if k in data:
-                if k in ("execute", "demo"):
-                    current_params[k] = bool(data[k])
-                elif k == "symbol":
+                if k == "symbol":
                     current_params[k] = str(data[k]).strip() or DEFAULT_PARAMS[k]
                 else:
                     try:

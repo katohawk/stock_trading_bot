@@ -22,8 +22,6 @@
       cooldown_sec: parseFloat(fd.get("cooldown_sec")) || 60,
       buy_amount_usdt: parseFloat(fd.get("buy_amount_usdt")) || 50,
       min_buy_usdt: parseFloat(fd.get("min_buy_usdt")) || 10,
-      execute: fd.get("execute") === "on",
-      demo: fd.get("demo") === "on",
     };
   }
 
@@ -43,8 +41,6 @@
     set("cooldown_sec", p.cooldown_sec);
     set("buy_amount_usdt", p.buy_amount_usdt);
     set("min_buy_usdt", p.min_buy_usdt);
-    setCheck("execute", p.execute);
-    setCheck("demo", p.demo);
   }
 
   async function fetchStatus() {

@@ -40,12 +40,11 @@ backtest:
 #   live:
 #     api_key: ${API_KEY}
 #     api_secret: ${API_SECRET}
-# OKX 实盘：设置环境变量 OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE 后运行 run_okx_live.py
-# 币安实盘：设置环境变量 BINANCE_API_KEY, BINANCE_API_SECRET 后运行 run_binance_live.py
+# OKX 实盘：设置环境变量 OKX_API_KEY, OKX_API_SECRET, OKX_PASSPHRASE 后运行 run_okx_live.py 或 Web 控制台
 
 # --- 加密货币（高抛低吸 / 网格）---
 # crypto:
-#   exchange: binance   # binance | okx
+#   exchange: okx
 #   symbols: ["BTC/USDT"]
 #   strategy:
 #     name: grid

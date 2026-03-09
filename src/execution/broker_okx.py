@@ -34,12 +34,10 @@ class OKXBroker(BrokerBase):
         api_key: str,
         api_secret: str,
         passphrase: str,
-        demo: bool = False,
     ):
         self.api_key = api_key
         self.api_secret = api_secret
         self.passphrase = passphrase
-        self.demo = demo  # OKX 模拟盘
         self._exchange = None
         self._orders: Dict[str, Order] = {}
 
@@ -52,9 +50,6 @@ class OKXBroker(BrokerBase):
             "secret": self.api_secret,
             "password": self.passphrase,
         })
-        if self.demo:
-            self._exchange.options["defaultType"] = "spot"
-            self._exchange.headers["x-simulated-trading"] = "1"
         # 避免 OKX 返回中 None 币种导致 ccxt parse_market 报错 (NoneType + str)
         self._exchange.options["loadMarkets"] = False
         self._apply_load_markets_fallback()

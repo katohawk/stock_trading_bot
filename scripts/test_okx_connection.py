@@ -33,7 +33,7 @@ if not all([api_key, api_secret, passphrase]):
 print("\n正在连接 OKX...")
 try:
     from src.execution import OKXBroker
-    broker = OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase, demo=False)
+    broker = OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase)
     account = broker.get_account()
     print("连接成功！")
     print("  账户权益(约):", round(account.equity, 2), "USDT")

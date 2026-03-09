@@ -6,8 +6,8 @@
 
 ## 项目是什么
 
-- **stock_trading_bot**：从数据、策略、风控到回测/实盘的完整链路，支持 A 股、美股、加密货币（OKX/币安）。
-- **你最常改的**：OKX 现货「涨卖跌买」实盘脚本 `run_okx_live.py`，逻辑集中在一个文件，无复杂依赖。
+- **stock_trading_bot**：OKX 现货涨卖跌买实盘机器人（仅 OKX）；可选回测与监控脚本。
+- **你最常改的**：OKX 实盘脚本 `run_okx_live.py`，逻辑集中在一个文件，无复杂依赖。
 
 ---
 
@@ -17,9 +17,8 @@
 |------|------|
 | **入口脚本** | `run_okx_live.py`（项目根目录） |
 | **依赖** | `.env` 中 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`；`src.execution.OKXBroker`、`src.strategy.SimpleThresholdStrategy` |
-| **只查推荐、不下单** | `python run_okx_live.py --symbol BTC/USDT` |
-| **真实下单** | `python run_okx_live.py --symbol BTC/USDT --execute` |
-| **轮询（如每 5 分钟）** | `python run_okx_live.py --symbol BTC/USDT --execute --interval 300` |
+| **单次检查并下单** | `python run_okx_live.py --symbol BTC/USDT` |
+| **轮询（如每 5 分钟）** | `python run_okx_live.py --symbol BTC/USDT --interval 300` |
 | **常用参数** | `--symbol` 交易对；`--ratio` 触发比例%（默认 0.5）；`--buy-amount-usdt` 每次买入 USDT（默认 50）；`--max-slippage` 市价保护上限（默认 0.001）；`--taker-fee-rate` 吃单费率（默认 0.001） |
 
 ---
@@ -54,7 +53,7 @@
 
 ### 3. 三秒价格确认（防插针）
 
-- 信号触发且 `--execute` 时：**每隔 1 秒取一次价，共 3 次**。
+- 信号触发时：**每隔 1 秒取一次价，共 3 次**。
 - 判定：3 个价格的**标准差 / 均价 > 0.1%** → 视为插针，**取消本次下单**（不更新参考价）。
 - 代码常量：`PRICE_SAMPLES = 3`，`PRICE_SAMPLE_INTERVAL = 1.0`，`SPIKE_STD_THRESHOLD_PCT = 0.001`。
 
@@ -67,7 +66,7 @@
 ### 5. 执行顺序（同脚本内顺序）
 
 1. 取当前价 → 策略推荐（买/卖/观望）。
-2. 若有信号且 `--execute`：**三秒价格确认**（3 次取样）→ 若插针则**取消**。
+2. 若有信号：**三秒价格确认**（3 次取样）→ 若插针则**取消**。
 3. **市价保护**（买一卖一价差）→ 过大则**暂缓**。
 4. 若是**卖出**：**盈利硬约束**（0.3%）→ 不通过则**不卖**。
 5. 下单（市价）；**成交后**写回 `.monitor_ref.json`（reference_price、avg_cost、position_qty）。

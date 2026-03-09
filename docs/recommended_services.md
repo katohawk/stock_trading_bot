@@ -59,8 +59,6 @@
 
 如需把「推荐」接到 Telegram 等，可在 `run_monitor.py` 里在打印后加一次 HTTP 请求（或调现成推送库）。
 
-## 钱在币安：自动化与备选平台
+## 本仓库：OKX 实盘
 
-- **币安直接自动化**：用 API Key（仅开现货交易、禁止提现）即可，资金不用转出。本仓库提供 `BinanceBroker`（ccxt）和 `run_binance_live.py`：定时监控 + 涨卖跌买，可只推荐或加 `--execute` 实盘下单。详见 [docs/binance_automation.md](docs/binance_automation.md)。
-- **OKX（欧易）**：用 `OKXBroker` 和 `run_okx_live.py`，需配置 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE`。完整步骤见 [docs/okx_automation.md](docs/okx_automation.md)。
-- **若币安不可用**（地区/限制）：可转到 **OKX、Bybit、Gate.io** 等，同样用 ccxt 对接，逻辑一致；或使用 **3Commas、Cryptohopper** 等第三方机器人连接币安/其他交易所（不写代码，资金仍在交易所）。
+本仓库仅支持 **OKX（欧易）** 现货：配置 `OKX_API_KEY`、`OKX_API_SECRET`、`OKX_PASSPHRASE` 后，用 `run_okx_live.py` 或 Web 控制台（`server.py`）即可涨卖跌买、自动实盘下单。完整步骤见 [docs/okx_automation.md](docs/okx_automation.md)。

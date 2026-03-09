@@ -261,8 +261,6 @@ def main():
     parser.add_argument("--symbol", default="BTC/USDT", help="交易对")
     parser.add_argument("--ratio", type=float, default=0.5, help="触发比例%%")
     parser.add_argument("--interval", type=float, default=0, help="轮询间隔秒")
-    parser.add_argument("--execute", action="store_true", help="是否真实下单")
-    parser.add_argument("--demo", action="store_true", help="OKX 模拟盘")
     parser.add_argument("--taker-fee-rate", type=float, default=0.001, help="吃单费率")
     parser.add_argument("--buy-amount-usdt", type=float, default=50.0, help="每次买入固定 USDT")
     parser.add_argument("--min-buy-usdt", type=float, default=10.0, help="低于此金额(USDT)不下单")
@@ -282,8 +280,8 @@ def main():
     api_secret = os.environ.get("OKX_API_SECRET", "").strip()
     passphrase = os.environ.get("OKX_PASSPHRASE", "").strip()
 
-    if args.execute and (not api_key or not api_secret or not passphrase):
-        _log("实盘下单需在 .env 中设置 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE")
+    if not api_key or not api_secret or not passphrase:
+        _log("请在 .env 或 API 配置页设置 OKX_API_KEY、OKX_API_SECRET、OKX_PASSPHRASE")
         return 1
 
     state = load_state(args.symbol)
@@ -300,7 +298,7 @@ def main():
         api_ok = False
         for attempt in range(2):
             try:
-                broker = broker or OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase, demo=args.demo)
+                broker = broker or OKXBroker(api_key=api_key, api_secret=api_secret, passphrase=passphrase)
                 account = broker.get_account()
                 price = get_price_from_okx_with_retry(broker, args.symbol)
                 session_start, cumulative_fee = load_session_pnl()
@@ -332,9 +330,6 @@ def main():
                 return 1
         if not api_ok:
             return 1
-    else:
-        price = get_price_fallback(args.symbol)
-        _log(f"{args.symbol} 当前价={price:.4f} (yfinance)")
 
     if price <= 0:
         _log("无法获取价格，退出")
@@ -353,7 +348,7 @@ def main():
     if direction is not None:
         _log(f"操作方向: {'卖出' if direction == SignalDirection.FLAT else '买入'}")
 
-        if args.execute and broker is not None:
+        if broker is not None:
             elapsed = time.time() - last_order_time
             if elapsed < args.cooldown_sec:
                 _log("冷静期未满，跳过本次下单（距上次 %.1f 秒，需至少 %.0f 秒）" % (elapsed, args.cooldown_sec))

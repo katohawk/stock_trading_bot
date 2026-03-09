@@ -102,27 +102,18 @@ python run_okx_live.py --symbol BTC/USDT --ratio 1 --interval 300
 
 `--interval 300` 表示每 300 秒（5 分钟）检查一次，循环运行。
 
-### 4. 实盘下单（慎用）
+### 4. 实盘下单
 
-确认逻辑无误后再加 `--execute`，会按推荐在 OKX 现货市价买卖：
+配置好 OKX API 后，运行即按推荐在 OKX 现货市价买卖（无模拟盘选项）：
 
 ```bash
-python run_okx_live.py --symbol BTC/USDT --ratio 1 --execute
+python run_okx_live.py --symbol BTC/USDT --ratio 1
 ```
 
 - 涨 ≥ 比例（默认 1%）→ 市价卖出该币种持仓。
-- 跌 ≥ 比例 → 用约 20% 权益或 95% USDT 余额市价买入。
+- 跌 ≥ 比例 → 按参数（如每次买入 USDT）市价买入。
 
-建议先用 **OKX 模拟盘** 验证：
-
-```bash
-export OKX_API_KEY="模拟盘 API Key"
-export OKX_API_SECRET="模拟盘 Secret"
-export OKX_PASSPHRASE="模拟盘 Passphrase"
-python run_okx_live.py --symbol BTC/USDT --ratio 1 --execute --demo
-```
-
-OKX 模拟盘需在官网单独申请模拟账户并创建 API，请求时加 `x-simulated-trading: 1`（本仓库 `--demo` 已处理）。
+建议先用小资金验证逻辑。
 
 ---
 
@@ -133,8 +124,6 @@ OKX 模拟盘需在官网单独申请模拟账户并创建 API，请求时加 `x
 | `--symbol` | 交易对 | `BTC/USDT`、`ETH/USDT` |
 | `--ratio` | 触发比例（%） | `1` 表示涨跌 1% 触发 |
 | `--interval` | 循环间隔（秒），0 表示只跑一次 | `300` |
-| `--execute` | 是否真实下单 | 不加则只推荐 |
-| `--demo` | 是否用 OKX 模拟盘 | 需配模拟盘 API |
 
 参考价会保存在当前目录的 `.monitor_ref.json`，下次运行会沿用，实现「相对上次价涨了卖、跌了买」。
 
@@ -144,7 +133,7 @@ OKX 模拟盘需在官网单独申请模拟账户并创建 API，请求时加 `x
 
 - **执行层**：`src/execution/broker_okx.py` 里的 `OKXBroker`，用 ccxt 连接 OKX 现货，实现下单、撤单、查单、查余额。
 - **入口脚本**：`run_okx_live.py`，读环境变量、拉价格、调用 `SimpleThresholdStrategy.recommend()`，可选调用 `OKXBroker.submit_order()` 下单。
-- **数据**：若需 OKX K 线回测，可用 `CryptoAdapter(exchange_id="okx", ...)` 拉历史数据（与币安同一套 Bar 结构）。
+- **数据**：若需 OKX K 线回测，可用 `CryptoAdapter(exchange_id="okx", ...)` 拉历史数据。
 
 ---
 
@@ -152,6 +141,4 @@ OKX 模拟盘需在官网单独申请模拟账户并创建 API，请求时加 `x
 
 - **API 报错 "Invalid API Key"**：检查 Key/Secret/Passphrase 是否完整、是否有多余空格、是否对应实盘/模拟盘。
 - **报错 "Account mode does not support"**：OKX 账户模式要支持现货交易，在 OKX 账户设置里确认。
-- **不想实盘先试**：用 `--demo` 并配置模拟盘 API，或只跑不加 `--execute`，看推荐结果即可。
-
-总结：在 OKX 创建 API（交易权限、设 Passphrase）→ 配置三个环境变量 → 用 `run_okx_live.py` 只推荐或加 `--execute` 实盘下单；建议先用模拟盘或小资金验证。
+总结：在 OKX 创建 API（交易权限、设 Passphrase）→ 配置三个环境变量（或 Web 控制台 API 配置页）→ 用 `run_okx_live.py` 或 Web 控制台启动即实盘下单；建议先用小资金验证。
