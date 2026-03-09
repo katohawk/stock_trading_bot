@@ -41,6 +41,22 @@ body {
   font-weight: 600;
 }
 
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-nav .link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.header-nav .link:hover {
+  color: var(--text);
+}
+
 .status-pill {
   padding: 4px 10px;
   border-radius: 12px;
@@ -165,11 +181,32 @@ body {
   margin-right: 6px;
 }
 
+.params-form input[type="password"] {
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.config-form .ctrl-row {
+  margin-top: 12px;
+}
+
+.msg {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .log-panel {
   flex: 1;
   min-height: 280px;
+  max-height: 50vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .log-panel h2 {
@@ -178,6 +215,7 @@ body {
 
 .log {
   flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 12px;
   background: #0a0e14;

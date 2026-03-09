@@ -14,7 +14,15 @@ from pathlib import Path
 
 # 项目根目录
 ROOT = Path(__file__).resolve().parent
+ENV_FILE = ROOT / ".env"
 sys.path.insert(0, str(ROOT))
+
+# 可在页面配置的环境变量（与 .env 对应）
+ENV_KEYS = [
+    ("OKX_API_KEY", "OKX API Key"),
+    ("OKX_API_SECRET", "OKX API Secret"),
+    ("OKX_PASSPHRASE", "OKX Passphrase（创建 API 时自设的密码）"),
+]
 
 try:
     from flask import Flask, request, jsonify, Response, send_from_directory
@@ -22,7 +30,7 @@ except ImportError:
     print("请安装: pip install flask")
     sys.exit(1)
 
-app = Flask(__name__, static_folder="web/static", static_url_path="")
+app = Flask(__name__, static_folder=str(ROOT / "web" / "static"), static_url_path="")
 
 # ---------- 进程与日志 ----------
 process: subprocess.Popen = None
@@ -135,9 +143,80 @@ def run_bot_worker(params: dict):
 current_params: dict = dict(DEFAULT_PARAMS)
 
 
+def _read_env_status() -> dict:
+    """返回各 key 是否已配置（set/unset），不返回具体值。"""
+    status = {key: "unset" for key, _ in ENV_KEYS}
+    if not ENV_FILE.exists():
+        return status
+    try:
+        text = ENV_FILE.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = (v.strip().strip('"').strip("'") or "").strip()
+                if k in status and v:
+                    status[k] = "set"
+    except Exception:
+        pass
+    return status
+
+
+def _write_env_updates(updates: dict):
+    """只更新给定 key，其余行与注释尽量保留。"""
+    lines = []
+    if ENV_FILE.exists():
+        try:
+            text = ENV_FILE.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                if "=" in line and not line.strip().startswith("#"):
+                    k, _, _ = line.partition("=")
+                    key = k.strip()
+                    if key in updates:
+                        lines.append(f"{key}={updates[key]}")
+                        del updates[key]
+                        continue
+                lines.append(line)
+        except Exception:
+            lines = []
+    for k, v in updates.items():
+        lines.append(f"{k}={v}")
+    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.route("/config")
+def config_page():
+    return send_from_directory(app.static_folder, "config.html")
+
+
+@app.route("/api/env", methods=["GET"])
+def api_get_env():
+    """返回各 key 是否已配置（set/unset），不返回明文。"""
+    return jsonify(_read_env_status())
+
+
+@app.route("/api/env", methods=["POST"])
+def api_set_env():
+    """更新 .env 中指定 key，请求体为 { key: value }。值为空则不修改该键。"""
+    data = request.get_json() or {}
+    updates = {}
+    for key, _ in ENV_KEYS:
+        if key in data and data[key] is not None:
+            v = str(data[key]).strip()
+            if v:
+                updates[key] = v
+    if updates:
+        _write_env_updates(updates)
+        # 当前进程环境不会自动更新，仅对新启动的机器人生效
+    return jsonify({"ok": True, "status": _read_env_status()})
 
 
 @app.route("/api/status")

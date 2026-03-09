@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API 配置 - OKX 交易机器人</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="header">
+    <h1>API 配置</h1>
+    <a href="/" class="btn btn-stop">返回控制台</a>
+  </header>
+
+  <main class="main">
+    <section class="panel">
+      <h2>环境变量（.env）</h2>
+      <p class="hint">用于实盘下单，保存后对新启动的机器人生效。留空表示不修改该键。</p>
+      <form class="params-form config-form" id="envForm">
+        <div class="row">
+          <label for="OKX_API_KEY">OKX API Key</label>
+          <input type="password" id="OKX_API_KEY" name="OKX_API_KEY" placeholder="已配置，留空不修改" autocomplete="off">
+        </div>
+        <div class="row">
+          <label for="OKX_API_SECRET">OKX API Secret</label>
+          <input type="password" id="OKX_API_SECRET" name="OKX_API_SECRET" placeholder="已配置，留空不修改" autocomplete="off">
+        </div>
+        <div class="row">
+          <label for="OKX_PASSPHRASE">OKX Passphrase（创建 API 时自设的密码）</label>
+          <input type="password" id="OKX_PASSPHRASE" name="OKX_PASSPHRASE" placeholder="已配置，留空不修改" autocomplete="off">
+        </div>
+        <div class="ctrl-row">
+          <button type="submit" class="btn btn-start">保存</button>
+          <span class="msg" id="msg"></span>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+</body>
+</html>
