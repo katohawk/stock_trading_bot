@@ -21,6 +21,7 @@ if _env_file.exists():
         pass
 
 # ---------- 常量 -----------
+DUST_QTY = 1e-8                  # 持仓量低于此视为 0（粉尘不参与买卖与成本）
 MIN_PROFIT_RATIO = 0.003           # 卖出硬约束：扣费后至少 0.3% 利润
 PRICE_SAMPLES = 3                  # 三秒价格确认：取样次数
 PRICE_SAMPLE_INTERVAL = 1.0        # 取样间隔（秒）
@@ -81,6 +82,8 @@ def save_state(
         data[symbol]["avg_cost"] = avg_cost
     if position_qty is not None:
         data[symbol]["position_qty"] = position_qty
+        if position_qty == 0:
+            data[symbol].pop("avg_cost", None)  # 空仓时清掉成本，避免残留导致误判
     if last_order_time is not None:
         data[symbol]["last_order_time"] = last_order_time
     if last_trade_side is not None:
@@ -288,6 +291,8 @@ def main():
     ref_price = state.get("reference_price")
     avg_cost = state.get("avg_cost")  # 持仓成本，与文档一致
     position_qty = state.get("position_qty", 0) or 0
+    if (position_qty or 0) < DUST_QTY:
+        position_qty = 0
     last_order_time = state.get("last_order_time") or 0
     last_trade_side = state.get("last_trade_side") or ""
 
@@ -306,12 +311,17 @@ def main():
                     session_start = account.equity
                     save_session_pnl(session_start, cumulative_fee)
                 pos = account.positions.get(args.symbol)
-                if pos and (pos.quantity or 0) > 0 and not (position_qty or 0):
-                    position_qty = pos.quantity
+                qty_from_ex = (pos.quantity if pos else 0) or 0
+                if qty_from_ex >= DUST_QTY and not (position_qty or 0):
+                    position_qty = qty_from_ex
                     if not avg_cost or avg_cost <= 0:
                         avg_cost = price
                     save_state(args.symbol, position_qty=position_qty, avg_cost=avg_cost)
                     _log("已从交易所同步持仓: 数量=%s 成本(估)=%.4f" % (position_qty, avg_cost))
+                elif qty_from_ex < DUST_QTY and (position_qty or avg_cost):
+                    position_qty = 0
+                    save_state(args.symbol, position_qty=0)
+                    _log("交易所持仓为粉尘或空仓，已置空本地持仓与成本")
                 pnl = account.equity - session_start
                 net_pnl = pnl - cumulative_fee
                 _log(f"{args.symbol} 当前价={price:.4f} 权益={account.equity:.2f} USDT 本次运行收益={pnl:+.2f} USDT 累计手续费(估)={cumulative_fee:.2f} USDT 净收益={net_pnl:+.2f} USDT")
@@ -335,6 +345,14 @@ def main():
         _log("无法获取价格，退出")
         return 1
 
+    # 明确当前是「等买」还是「等卖」，方便看日志
+    if (position_qty or 0) < DUST_QTY:
+        ref_hint = f"参考价={ref_price:.2f}" if ref_price else "参考价=当前价"
+        _log(f"当前状态: 仅 USDT，等待跌 {args.ratio}% 触发买入（{ref_hint}）")
+    else:
+        cost_hint = f"成本约={avg_cost:.2f}" if avg_cost else ""
+        _log(f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {args.ratio}% 触发卖出（{cost_hint}）")
+
     text, direction, new_ref = strategy.recommend(price)
     # 非对称比例：上一笔是买入时，卖出需额外涨幅（手续费补偿）才触发
     if direction == SignalDirection.FLAT and last_trade_side == "buy" and ref_price and ref_price > 0:
@@ -343,6 +361,8 @@ def main():
             direction = None
             text = "涨幅未达比例+手续费补偿，观望（上一笔为买入，需多涨 %.2f%% 再卖）" % (args.sell_fee_compensation_pct,)
     _log(f"推荐: {text}")
+    if direction is None and (position_qty or 0) < DUST_QTY:
+        _log("（当前无持仓，下次触发为买入）")
 
     executed = False
     if direction is not None:
@@ -396,12 +416,16 @@ def main():
                             else:
                                 _log("余额不足或低于最小下单额，未下单（可用 USDT=%.2f 需>=%.2f）" % (account.cash, args.min_buy_usdt))
                         else:
-                            # 卖出：盈利硬约束 (当前价 - avg_cost) / avg_cost > 0.003
-                            if not sell_profit_ok(exec_price, avg_cost):
+                            # 卖出：持仓为粉尘/空仓则只更新参考价；否则做盈利硬约束再卖
+                            if (position_qty or 0) < DUST_QTY:
+                                _log("持仓为粉尘或空仓，仅更新参考价，不卖出")
+                                save_state(args.symbol, reference_price=new_ref, position_qty=0)
+                                executed = True
+                            elif not sell_profit_ok(exec_price, avg_cost):
                                 _log("卖出跳过: 扣费后利润未达 0.3%，不卖出")
                             else:
                                 pos = account.positions.get(args.symbol)
-                                if pos and pos.quantity > 0:
+                                if pos and (pos.quantity or 0) >= DUST_QTY:
                                     try:
                                         order = broker.submit_order(args.symbol, OrderSide.SELL, pos.quantity, price=None, reason=text)
                                         if not order.is_done():
