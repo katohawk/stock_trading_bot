@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 # 项目根目录
@@ -82,6 +83,10 @@ def broadcast_log(line: str):
             pass
 
 
+def system_log(message: str):
+    broadcast_log(f"[{datetime.now().strftime('%H:%M:%S')}] [系统] {message}\n")
+
+
 def run_bot_worker(params: dict):
     """在子进程中运行机器人，并广播日志；退出后根据策略决定是否自动重试."""
     global process, retry_count, retry_timer, user_stopped
@@ -98,12 +103,12 @@ def run_bot_worker(params: dict):
             text=True,
             bufsize=1,
         )
-    broadcast_log(f"[系统] 已启动: {' '.join(argv)}\n")
+    system_log(f"已启动: {' '.join(argv)}")
     try:
         for line in iter(process.stdout.readline, ""):
             broadcast_log(line)
     except Exception as e:
-        broadcast_log(f"[系统] 读取输出异常: {e}\n")
+        system_log(f"读取输出异常: {e}")
     finally:
         code = process.poll()
         if code is None:
@@ -115,13 +120,13 @@ def run_bot_worker(params: dict):
             code = process.returncode
         with process_lock:
             process = None
-        broadcast_log(f"[系统] 进程已退出，code={code}\n")
+        system_log(f"进程已退出，code={code}")
         if user_stopped:
             user_stopped = False
             return
         if code != 0 and retry_count < max_auto_retries:
             retry_count += 1
-            broadcast_log(f"[系统] {retry_delay_sec} 秒后进行第 {retry_count}/{max_auto_retries} 次自动重试…\n")
+            system_log(f"{retry_delay_sec} 秒后进行第 {retry_count}/{max_auto_retries} 次自动重试…")
             def retry_later():
                 global retry_timer
                 retry_timer = None
@@ -130,7 +135,7 @@ def run_bot_worker(params: dict):
             retry_timer.start()
         else:
             if retry_count >= max_auto_retries:
-                broadcast_log(f"[系统] 已达最大自动重试次数 ({max_auto_retries})，停止重试。\n")
+                system_log(f"已达最大自动重试次数 ({max_auto_retries})，停止重试。")
             retry_count = 0
 
 

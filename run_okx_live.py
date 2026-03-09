@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -40,7 +41,7 @@ _consecutive_bad_exec = 0
 
 
 def _log(msg: str) -> None:
-    print(f"[日志] {msg}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [日志] {msg}")
 
 
 def load_state(symbol: str) -> dict:

@@ -2,6 +2,7 @@
 OKX（欧易）现货执行层：用 ccxt 连接 OKX，实现 BrokerBase。
 需要 API Key + Secret + Passphrase（创建 API 时自己设的密码），资金在 OKX 即可自动化下单。
 """
+from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -21,6 +22,27 @@ def _ccxt_state_to_order_state(status: str) -> OrderState:
     if s in ("rejected", "expired"):
         return OrderState.REJECTED
     return OrderState.PENDING
+
+
+def _truncate_amount(quantity: float, precision) -> float:
+    """按交易所数量精度向下截断，兼容 decimal places 与 tick size 两种表达。"""
+    if quantity <= 0:
+        return 0.0
+    if precision is None:
+        return quantity
+    precision_decimal = Decimal(str(precision))
+    if precision_decimal >= 1:
+        precision_int = int(precision_decimal)
+        if precision_int <= 0:
+            return float(int(quantity))
+        step = Decimal("1").scaleb(-precision_int)
+        amount = Decimal(str(quantity)).quantize(step, rounding=ROUND_DOWN)
+        return float(amount)
+    if precision_decimal <= 0:
+        return float(int(quantity))
+    amount = Decimal(str(quantity))
+    amount = amount - (amount % precision_decimal)
+    return float(amount)
 
 
 class OKXBroker(BrokerBase):
@@ -85,7 +107,8 @@ class OKXBroker(BrokerBase):
                 "quote": quote,
                 "spot": True,
                 "contract": False,
-                "precision": {"amount": 8, "price": 8},
+                # OKX in ccxt uses TICK_SIZE mode, so precision fields are step sizes, not decimal-place counts.
+                "precision": {"amount": 0.00000001, "price": 0.00000001},
             }
 
         def _patched_market(symbol: str):
@@ -106,10 +129,11 @@ class OKXBroker(BrokerBase):
     ) -> Order:
         ex = self._get_exchange()
         order_type = "limit" if price is not None and price > 0 else "market"
-        amount = quantity
+        market = ex.market(symbol)
+        amount_precision = (market.get("precision") or {}).get("amount") or 0.00000001
+        amount = _truncate_amount(quantity, amount_precision)
         if amount <= 0:
-            o = Order(order_id="", symbol=symbol, side=side, quantity=quantity, state=OrderState.REJECTED, reason="qty<=0")
-            o.reason = reason or "qty<=0"
+            o = Order(order_id="", symbol=symbol, side=side, quantity=quantity, state=OrderState.REJECTED, reason=f"qty<=0 after precision trim({amount_precision})")
             return o
         try:
             result = ex.create_order(

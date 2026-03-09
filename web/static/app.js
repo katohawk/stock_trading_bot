@@ -71,6 +71,13 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  function appendSystemLog(message) {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    appendLog(`[${time}] [系统] ${message}\n`);
+  }
+
   function connectLogStream() {
     const es = new EventSource("/api/logs/stream");
     es.onmessage = function (e) {
@@ -95,9 +102,9 @@
     const d = await r.json();
     if (d.ok) {
       setRunning(true);
-      appendLog("[系统] 启动请求已发送\n");
+      appendSystemLog("启动请求已发送");
     } else {
-      appendLog("[系统] " + (d.message || "启动失败") + "\n");
+      appendSystemLog(d.message || "启动失败");
     }
   });
 
@@ -106,7 +113,7 @@
     const d = await r.json();
     if (d.ok) {
       setRunning(false);
-      appendLog("[系统] 已发送暂停请求\n");
+      appendSystemLog("已发送暂停请求");
     }
   });
 
