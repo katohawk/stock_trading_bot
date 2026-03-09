@@ -34,12 +34,14 @@ def compute_metrics(
         buys = trades[trades["side"] == "buy"]
         sells = trades[trades["side"] == "sell"]
         n_trades = len(buys) + len(sells)
-        win_trades = 0
         if "pnl" in trades.columns:
             win_trades = (trades["pnl"] > 0).sum()
+            loss_trades = (trades["pnl"] < 0).sum()
         else:
-            win_trades = len(sells)  # 简化：无法从当前 trades 结构算每笔盈亏
-        win_rate = win_trades / n_trades if n_trades else 0
+            win_trades = 0
+            loss_trades = 0
+        closed_trades = win_trades + loss_trades
+        win_rate = win_trades / closed_trades if closed_trades else 0.0
     else:
         n_trades = 0
         win_rate = 0.0

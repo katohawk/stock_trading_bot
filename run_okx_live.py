@@ -212,13 +212,14 @@ def save_session_pnl(session_start_equity: float, cumulative_fee: float):
     SESSION_PNL_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def sell_profit_ok(price: float, avg_cost: float) -> bool:
-    """盈利硬约束：(当前价 - avg_cost) / avg_cost > 0.003 才允许卖出。"""
+def sell_profit_ok(price: float, avg_cost: float, taker_fee_rate: float) -> bool:
+    """盈利硬约束：至少覆盖双边手续费并留出最小缓冲，避免小波动反复磨损。"""
     if avg_cost is None or avg_cost <= 0:
         return True
     profit_ratio = (price - avg_cost) / avg_cost
-    ok = profit_ratio > MIN_PROFIT_RATIO
-    _log(f"  盈利硬约束: 当前价={price:.4f} 持仓成本={avg_cost:.4f} 利润率={profit_ratio*100:.3f}% 需>{MIN_PROFIT_RATIO*100:.2f}% 通过={ok}")
+    min_profit_ratio = max(MIN_PROFIT_RATIO, taker_fee_rate * 2 + 0.001)
+    ok = profit_ratio > min_profit_ratio
+    _log(f"  盈利硬约束: 当前价={price:.4f} 持仓成本={avg_cost:.4f} 利润率={profit_ratio*100:.3f}% 需>{min_profit_ratio*100:.2f}% 通过={ok}")
     return ok
 
 
@@ -259,21 +260,8 @@ def wait_for_order_fill(broker, order, timeout_sec: float = 30, poll_interval: f
     return order
 
 
-def main():
-    parser = argparse.ArgumentParser(description="OKX：涨卖跌买（盈利硬约束 + 三秒确认 + 市价保护）")
-    parser.add_argument("--symbol", default="BTC/USDT", help="交易对")
-    parser.add_argument("--ratio", type=float, default=0.5, help="触发比例%%")
-    parser.add_argument("--interval", type=float, default=0, help="轮询间隔秒")
-    parser.add_argument("--taker-fee-rate", type=float, default=0.001, help="吃单费率")
-    parser.add_argument("--buy-amount-usdt", type=float, default=50.0, help="每次买入固定 USDT")
-    parser.add_argument("--min-buy-usdt", type=float, default=10.0, help="低于此金额(USDT)不下单")
-    parser.add_argument("--max-slippage", type=float, default=MAX_SLIPPAGE, help="市价保护：价差上限")
-    parser.add_argument("--cooldown-sec", type=float, default=COOLDOWN_SEC_DEFAULT, help="同币种两次下单最小间隔(秒)")
-    parser.add_argument("--sell-fee-compensation-pct", type=float, default=SELL_FEE_COMP_PCT_DEFAULT, help="上一笔买入后卖出时额外触发比例%%(手续费补偿)")
-    parser.add_argument("--exec-quality-threshold-pct", type=float, default=EXEC_QUALITY_THRESHOLD_PCT, help="成交价与下单时均价偏差超此%%计为不良")
-    parser.add_argument("--exec-pause-sec", type=float, default=EXEC_PAUSE_SEC_DEFAULT, help="连续3次不良后自动暂停秒数")
-    args = parser.parse_args()
-
+def run_once(args) -> int:
+    """执行一轮检查与下单，返回退出码。"""
     from src.strategy import SimpleThresholdStrategy
     from src.strategy.base import SignalDirection
     from src.execution import OKXBroker
@@ -424,8 +412,8 @@ def main():
                                 _log("持仓为粉尘或空仓，仅更新参考价，不卖出")
                                 save_state(args.symbol, reference_price=new_ref, position_qty=0)
                                 executed = True
-                            elif not sell_profit_ok(exec_price, avg_cost):
-                                _log("卖出跳过: 扣费后利润未达 0.3%，不卖出")
+                            elif not sell_profit_ok(exec_price, avg_cost, args.taker_fee_rate):
+                                _log("卖出跳过: 扣费后利润空间不足，不卖出")
                             else:
                                 pos = account.positions.get(args.symbol)
                                 if pos and (pos.quantity or 0) >= DUST_QTY:
@@ -456,17 +444,33 @@ def main():
                                 else:
                                     _log("无该币种持仓，未下单")
 
-    if direction is not None and not executed:
-        # 本周期已建议买卖但未成交（PENDING/余额不足/插针/滑点），仍更新参考价，避免下一周期重复触发同向信号
-        save_state(args.symbol, reference_price=new_ref)
-        _log("本周期已触发信号但未成交，已更新参考价以避免重复下单")
-    # executed 时已在买卖分支内 save_state；观望(direction is None)时参考价未变，不写盘减少刷屏
+    return 0
 
-    if args.interval > 0:
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="OKX：涨卖跌买（盈利硬约束 + 三秒确认 + 市价保护）")
+    parser.add_argument("--symbol", default="BTC/USDT", help="交易对")
+    parser.add_argument("--ratio", type=float, default=0.5, help="触发比例%%")
+    parser.add_argument("--interval", type=float, default=0, help="轮询间隔秒")
+    parser.add_argument("--taker-fee-rate", type=float, default=0.001, help="吃单费率")
+    parser.add_argument("--buy-amount-usdt", type=float, default=50.0, help="每次买入固定 USDT")
+    parser.add_argument("--min-buy-usdt", type=float, default=10.0, help="低于此金额(USDT)不下单")
+    parser.add_argument("--max-slippage", type=float, default=MAX_SLIPPAGE, help="市价保护：价差上限")
+    parser.add_argument("--cooldown-sec", type=float, default=COOLDOWN_SEC_DEFAULT, help="同币种两次下单最小间隔(秒)")
+    parser.add_argument("--sell-fee-compensation-pct", type=float, default=SELL_FEE_COMP_PCT_DEFAULT, help="上一笔买入后卖出时额外触发比例%%(手续费补偿)")
+    parser.add_argument("--exec-quality-threshold-pct", type=float, default=EXEC_QUALITY_THRESHOLD_PCT, help="成交价与下单时均价偏差超此%%计为不良")
+    parser.add_argument("--exec-pause-sec", type=float, default=EXEC_PAUSE_SEC_DEFAULT, help="连续3次不良后自动暂停秒数")
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+    while True:
+        code = run_once(args)
+        if code != 0 or args.interval <= 0:
+            return code
         _log(f"{args.interval} 秒后再次检查...")
         time.sleep(args.interval)
-        return main()
-    return 0
 
 
 if __name__ == "__main__":

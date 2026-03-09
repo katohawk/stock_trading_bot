@@ -23,6 +23,10 @@
       cooldown_sec: parseFloat(fd.get("cooldown_sec")) || 60,
       buy_amount_usdt: parseFloat(fd.get("buy_amount_usdt")) || 50,
       min_buy_usdt: parseFloat(fd.get("min_buy_usdt")) || 10,
+      taker_fee_rate: parseFloat(fd.get("taker_fee_rate")) || 0.001,
+      max_slippage: parseFloat(fd.get("max_slippage")) || 0.001,
+      exec_quality_threshold_pct: parseFloat(fd.get("exec_quality_threshold_pct")) || 0.1,
+      exec_pause_sec: parseFloat(fd.get("exec_pause_sec")) || 300,
     };
   }
 
@@ -43,6 +47,10 @@
     set("cooldown_sec", p.cooldown_sec);
     set("buy_amount_usdt", p.buy_amount_usdt);
     set("min_buy_usdt", p.min_buy_usdt);
+    set("taker_fee_rate", p.taker_fee_rate);
+    set("max_slippage", p.max_slippage);
+    set("exec_quality_threshold_pct", p.exec_quality_threshold_pct);
+    set("exec_pause_sec", p.exec_pause_sec);
   }
 
   async function fetchStatus() {

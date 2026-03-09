@@ -56,7 +56,24 @@
           <label>最小下单 USDT</label>
           <input type="number" name="min_buy_usdt" value="10" min="1">
         </div>
+        <div class="row">
+          <label>吃单费率</label>
+          <input type="number" name="taker_fee_rate" value="0.001" min="0" step="0.0001" title="默认 0.001 = 0.1%。用于估算手续费磨损和最低卖出利润要求">
+        </div>
+        <div class="row">
+          <label>最大滑点</label>
+          <input type="number" name="max_slippage" value="0.001" min="0" step="0.0001" title="买一卖一价差超过该比例时暂缓下单">
+        </div>
+        <div class="row">
+          <label>成交偏差阈值 %</label>
+          <input type="number" name="exec_quality_threshold_pct" value="0.1" min="0" step="0.05" title="成交价相对下单均价偏差超出该值会记为一次不良成交">
+        </div>
+        <div class="row">
+          <label>不良成交暂停(秒)</label>
+          <input type="number" name="exec_pause_sec" value="300" min="1" step="1" title="连续 3 次不良成交后自动暂停时长">
+        </div>
       </form>
+      <p class="hint">建议把单次目标利润保持在双边手续费之上，避免高频小波动把收益磨掉。</p>
     </section>
 
     <section class="panel log-panel">
