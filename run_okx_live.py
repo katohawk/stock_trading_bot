@@ -334,6 +334,22 @@ def run_once(args) -> int:
         _log("无法获取价格，退出")
         return 1
 
+    if (
+        (position_qty or 0) < DUST_QTY
+        and ref_price
+        and ref_price > 0
+        and args.empty_rebase_up_pct > 0
+        and price >= ref_price * (1 + args.empty_rebase_up_pct / 100.0)
+    ):
+        old_ref = ref_price
+        ref_price = price
+        strategy.set_reference(ref_price)
+        save_state(args.symbol, reference_price=ref_price, position_qty=0)
+        _log(
+            "空仓上行重定锚: 当前价较参考价上涨已达 %.2f%%，参考价从 %.2f 上调到 %.2f"
+            % (args.empty_rebase_up_pct, old_ref, ref_price)
+        )
+
     # 明确当前是「等买」还是「等卖」，方便看日志
     if (position_qty or 0) < DUST_QTY:
         ref_hint = f"参考价={ref_price:.2f}" if ref_price else "参考价=当前价"
@@ -343,7 +359,17 @@ def run_once(args) -> int:
             _log(f"  买入触发价={buy_trigger:.2f}（当前价≤此价才买），当前价={price:.2f}")
     else:
         cost_hint = f"成本约={avg_cost:.2f}" if avg_cost else ""
-        _log(f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {args.ratio}% 触发卖出（{cost_hint}）")
+        effective_sell_ratio = args.ratio + (args.sell_fee_compensation_pct if last_trade_side == "buy" else 0.0)
+        if last_trade_side == "buy":
+            _log(
+                f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {effective_sell_ratio}% 触发卖出（基础 {args.ratio}% + 手续费补偿 {args.sell_fee_compensation_pct}%）（{cost_hint}）"
+            )
+        else:
+            _log(f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {args.ratio}% 触发卖出（{cost_hint}）")
+        sell_ref = ref_price or avg_cost
+        if sell_ref and sell_ref > 0:
+            sell_trigger = sell_ref * (1 + effective_sell_ratio / 100.0)
+            _log(f"  卖出触发价={sell_trigger:.2f}（当前价≥此价才卖），当前价={price:.2f}")
 
     text, direction, new_ref = strategy.recommend(price)
     # 非对称比例：上一笔是买入时，卖出需额外涨幅（手续费补偿）才触发
@@ -352,6 +378,11 @@ def run_once(args) -> int:
         if price < ref_price * (1 + min_sell_ratio):
             direction = None
             text = "涨幅未达比例+手续费补偿，观望（上一笔为买入，需多涨 %.2f%% 再卖）" % (args.sell_fee_compensation_pct,)
+    # 空仓时若价格上涨到“卖出阈值”，不应把参考价继续上抬，否则买入触发价会一路追涨。
+    if direction == SignalDirection.FLAT and (position_qty or 0) < DUST_QTY:
+        direction = None
+        new_ref = ref_price
+        text = "空仓但价格已涨过参考价，继续等待回落买入；本次不更新参考价"
     _log(f"推荐: {text}")
     if direction is None and (position_qty or 0) < DUST_QTY:
         _log("（当前无持仓，下次触发为买入）")
@@ -397,7 +428,7 @@ def run_once(args) -> int:
                                         else:
                                             new_avg = fill_price
                                             new_qty = fill_qty
-                                        save_state(args.symbol, reference_price=new_ref, avg_cost=new_avg, position_qty=new_qty, last_order_time=time.time(), last_trade_side="buy")
+                                        save_state(args.symbol, reference_price=fill_price, avg_cost=new_avg, position_qty=new_qty, last_order_time=time.time(), last_trade_side="buy")
                                         check_execution_quality(exec_price, fill_price, args.exec_quality_threshold_pct, args.exec_pause_sec)
                                         _log(f"买入成交: 数量={fill_qty} 成交价={fill_price:.2f} 成交额={fill_qty * fill_price:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT 更新持仓成本={new_avg:.4f} 持仓量={new_qty}")
                                         executed = True
@@ -435,7 +466,7 @@ def run_once(args) -> int:
                                             after_fee_return_pct = expected_return_pct - 2 * args.taker_fee_rate * 100
                                             _log(f"卖出成交: 数量={sell_qty} 成交价={sell_price:.2f} 成交额={trade_value:.2f} USDT 本次手续费(估)={fee_est:.2f} USDT")
                                             _log(f"预期收益率: {expected_return_pct:.2f}%  |  扣费后收益: {after_fee_return_pct:.2f}%")
-                                            save_state(args.symbol, reference_price=new_ref, avg_cost=None, position_qty=0.0, last_order_time=time.time(), last_trade_side="sell")
+                                            save_state(args.symbol, reference_price=sell_price, avg_cost=None, position_qty=0.0, last_order_time=time.time(), last_trade_side="sell")
                                             check_execution_quality(exec_price, sell_price, args.exec_quality_threshold_pct, args.exec_pause_sec)
                                             executed = True
                                         else:
@@ -459,6 +490,7 @@ def build_parser():
     parser.add_argument("--max-slippage", type=float, default=MAX_SLIPPAGE, help="市价保护：价差上限")
     parser.add_argument("--cooldown-sec", type=float, default=COOLDOWN_SEC_DEFAULT, help="同币种两次下单最小间隔(秒)")
     parser.add_argument("--sell-fee-compensation-pct", type=float, default=SELL_FEE_COMP_PCT_DEFAULT, help="上一笔买入后卖出时额外触发比例%%(手续费补偿)")
+    parser.add_argument("--empty-rebase-up-pct", type=float, default=1.0, help="空仓时若价格较参考价上涨超过此%%，则上调参考价避免一直等旧低点；0 表示关闭")
     parser.add_argument("--exec-quality-threshold-pct", type=float, default=EXEC_QUALITY_THRESHOLD_PCT, help="成交价与下单时均价偏差超此%%计为不良")
     parser.add_argument("--exec-pause-sec", type=float, default=EXEC_PAUSE_SEC_DEFAULT, help="连续3次不良后自动暂停秒数")
     return parser

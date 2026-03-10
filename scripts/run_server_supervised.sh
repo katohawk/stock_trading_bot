@@ -10,6 +10,8 @@ HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-5555}"
 MAX_RESTARTS="${MAX_RESTARTS:-3}"
 RESTART_DELAY="${RESTART_DELAY:-10}"
+FOREGROUND="${FOREGROUND:-0}"
+DAEMONIZED="${RUN_SERVER_DAEMONIZED:-0}"
 
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
 APP_LOG="$LOG_DIR/server.log"
@@ -18,6 +20,34 @@ PID_FILE="$ROOT_DIR/.server_supervisor.pid"
 CHILD_PID_FILE="$ROOT_DIR/.server.pid"
 
 mkdir -p "$LOG_DIR"
+
+is_pid_alive() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+if [ -f "$PID_FILE" ]; then
+  existing_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if is_pid_alive "$existing_pid"; then
+    printf 'Supervisor already running with pid=%s\n' "$existing_pid"
+    exit 0
+  fi
+  rm -f "$PID_FILE"
+fi
+
+if [ -f "$CHILD_PID_FILE" ]; then
+  existing_child_pid="$(cat "$CHILD_PID_FILE" 2>/dev/null || true)"
+  if ! is_pid_alive "$existing_child_pid"; then
+    rm -f "$CHILD_PID_FILE"
+  fi
+fi
+
+if [ "$FOREGROUND" != "1" ] && [ "$DAEMONIZED" != "1" ]; then
+  RUN_SERVER_DAEMONIZED=1 nohup "$0" "$@" >/dev/null 2>&1 < /dev/null &
+  printf 'Supervisor started in background. pid=%s\n' "$!"
+  exit 0
+fi
+
 echo "$$" > "$PID_FILE"
 
 log() {
@@ -28,7 +58,7 @@ cleanup() {
   rm -f "$PID_FILE" "$CHILD_PID_FILE"
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM HUP
 
 restart_count=0
 

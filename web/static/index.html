@@ -41,6 +41,10 @@
           <input type="number" name="sell_fee_compensation_pct" value="0.15" step="0.05" min="0" title="上一笔买入后，需多涨此%才触发卖，覆盖手续费。可略降到 0.15 增加操作次数">
         </div>
         <div class="row">
+          <label>空仓上调参考 %</label>
+          <input type="number" name="empty_rebase_up_pct" value="1.0" step="0.1" min="0" title="空仓时若价格较参考价上涨超过此比例，就把参考价上调到当前价，避免一直等旧低点。设 0 表示关闭">
+        </div>
+        <div class="row">
           <label>轮询间隔(秒)</label>
           <input type="number" name="interval" value="60" min="1">
         </div>

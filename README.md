@@ -65,10 +65,16 @@ python server.py --port 5555
 
 ```bash
 chmod +x scripts/run_server_supervised.sh scripts/stop_server_supervised.sh
-nohup ./scripts/run_server_supervised.sh > /dev/null 2>&1 &
+./scripts/run_server_supervised.sh
 ```
 
-默认监听 `0.0.0.0:5555`，异常退出后每 10 秒重启一次，最多重启 3 次。日志文件：
+默认会自动转为后台运行并监听 `0.0.0.0:5555`，异常退出后每 10 秒重启一次，最多重启 3 次。若想前台运行便于观察，可用：
+
+```bash
+FOREGROUND=1 ./scripts/run_server_supervised.sh
+```
+
+日志文件：
 
 - `logs/server.log`
 - `logs/server_supervisor.log`

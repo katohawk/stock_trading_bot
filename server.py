@@ -53,6 +53,7 @@ DEFAULT_PARAMS = {
     "max_slippage": 0.001,
     "cooldown_sec": 60,
     "sell_fee_compensation_pct": 0.15,
+    "empty_rebase_up_pct": 1.0,
     "exec_quality_threshold_pct": 0.1,
     "exec_pause_sec": 300,
 }
@@ -70,6 +71,7 @@ def params_to_argv(params: dict) -> list:
     cmd += ["--max-slippage", str(params.get("max_slippage", 0.001))]
     cmd += ["--cooldown-sec", str(params.get("cooldown_sec", 60))]
     cmd += ["--sell-fee-compensation-pct", str(params.get("sell_fee_compensation_pct", 0.2))]
+    cmd += ["--empty-rebase-up-pct", str(params.get("empty_rebase_up_pct", 1.0))]
     cmd += ["--exec-quality-threshold-pct", str(params.get("exec_quality_threshold_pct", 0.1))]
     cmd += ["--exec-pause-sec", str(params.get("exec_pause_sec", 300))]
     return cmd
