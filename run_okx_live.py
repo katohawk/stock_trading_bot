@@ -32,6 +32,7 @@ COOLDOWN_SEC_DEFAULT = 60          # 同币种两次下单最小间隔（秒）
 SELL_FEE_COMP_PCT_DEFAULT = 0.2    # 上一笔买入后卖出时额外比例补偿（%）
 EXEC_QUALITY_THRESHOLD_PCT = 0.1   # 成交价与下单时均价偏差超此阈值计为一次不良
 EXEC_PAUSE_SEC_DEFAULT = 300       # 连续 3 次不良后自动暂停秒数
+SELL_SAFETY_BUFFER_RATIO = 0.0005  # 额外预留 0.05% 缓冲，覆盖零碎滑点/误差
 
 MONITOR_REF_FILE = Path(__file__).resolve().parent / ".monitor_ref.json"
 SESSION_PNL_FILE = Path(__file__).resolve().parent / ".session_pnl.json"
@@ -251,12 +252,49 @@ def save_session_pnl(session_start_equity: float, cumulative_fee: float):
     SESSION_PNL_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def sell_profit_ok(price: float, avg_cost: float, taker_fee_rate: float) -> bool:
-    """盈利硬约束：至少覆盖双边手续费并留出最小缓冲，避免小波动反复磨损。"""
+def get_min_profit_ratio(taker_fee_rate: float, max_slippage: float) -> float:
+    """
+    卖出最低利润率：
+    - 双边手续费
+    - 预估半档滑点
+    - 额外安全缓冲
+    """
+    estimated_round_trip_cost = taker_fee_rate * 2 + max(max_slippage / 2, 0.0)
+    return max(MIN_PROFIT_RATIO, estimated_round_trip_cost + SELL_SAFETY_BUFFER_RATIO)
+
+
+def compute_sell_trigger(
+    reference_price: float,
+    avg_cost: float,
+    ratio_pct: float,
+    fee_compensation_pct: float,
+    taker_fee_rate: float,
+    max_slippage: float,
+) -> tuple[float, float, float, float]:
+    """
+    统一卖出阈值：
+    - 波动触发价：参考价 * (1 + ratio + fee_compensation)
+    - 成本保护价：成本价 * (1 + 最低净利润率)
+    最终取两者较高者，兼顾高抛低吸与手续费保护。
+    """
+    swing_trigger = 0.0
+    cost_trigger = 0.0
+
+    if reference_price and reference_price > 0:
+        swing_trigger = reference_price * (1 + (ratio_pct + fee_compensation_pct) / 100.0)
+    min_profit_ratio = get_min_profit_ratio(taker_fee_rate, max_slippage)
+    if avg_cost and avg_cost > 0:
+        cost_trigger = avg_cost * (1 + min_profit_ratio)
+
+    return max(swing_trigger, cost_trigger), min_profit_ratio, swing_trigger, cost_trigger
+
+
+def sell_profit_ok(price: float, avg_cost: float, taker_fee_rate: float, max_slippage: float) -> bool:
+    """盈利硬约束：至少覆盖双边手续费、预估滑点并留出最小缓冲。"""
     if avg_cost is None or avg_cost <= 0:
         return True
     profit_ratio = (price - avg_cost) / avg_cost
-    min_profit_ratio = max(MIN_PROFIT_RATIO, taker_fee_rate * 2 + 0.001)
+    min_profit_ratio = get_min_profit_ratio(taker_fee_rate, max_slippage)
     ok = profit_ratio > min_profit_ratio
     _log(f"  盈利硬约束: 当前价={price:.4f} 持仓成本={avg_cost:.4f} 利润率={profit_ratio*100:.3f}% 需>{min_profit_ratio*100:.2f}% 通过={ok}")
     return ok
@@ -405,25 +443,40 @@ def run_once(args) -> int:
             _log(f"  买入触发价={buy_trigger:.2f}（当前价≤此价才买），当前价={price:.2f}")
     else:
         cost_hint = f"成本约={avg_cost:.2f}" if avg_cost else ""
-        effective_sell_ratio = args.ratio + (args.sell_fee_compensation_pct if last_trade_side == "buy" else 0.0)
-        if last_trade_side == "buy":
-            _log(
-                f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {effective_sell_ratio}% 触发卖出（基础 {args.ratio}% + 手续费补偿 {args.sell_fee_compensation_pct}%）（{cost_hint}）"
-            )
-        else:
-            _log(f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {args.ratio}% 触发卖出（{cost_hint}）")
-        sell_ref = ref_price or avg_cost
-        if sell_ref and sell_ref > 0:
-            sell_trigger = sell_ref * (1 + effective_sell_ratio / 100.0)
-            _log(f"  卖出触发价={sell_trigger:.2f}（当前价≥此价才卖），当前价={price:.2f}")
+        sell_trigger, min_profit_ratio, swing_trigger, cost_trigger = compute_sell_trigger(
+            ref_price,
+            avg_cost,
+            args.ratio,
+            args.sell_fee_compensation_pct,
+            args.taker_fee_rate,
+            args.max_slippage,
+        )
+        _log(
+            f"当前状态: 持有 BTC 约 {position_qty}，等待涨 {args.ratio}% + 手续费补偿 {args.sell_fee_compensation_pct}% 触发卖出（{cost_hint}）"
+        )
+        if swing_trigger > 0:
+            _log(f"  波动卖出价={swing_trigger:.2f}（参考价驱动）")
+        if cost_trigger > 0:
+            _log(f"  保本卖出价={cost_trigger:.2f}（至少覆盖约 {min_profit_ratio*100:.2f}% 成本/手续费/滑点）")
+        if sell_trigger > 0:
+            _log(f"  综合卖出触发价={sell_trigger:.2f}（当前价≥此价才卖），当前价={price:.2f}")
 
     text, direction, new_ref = strategy.recommend(price)
-    # 非对称比例：上一笔是买入时，卖出需额外涨幅（手续费补偿）才触发
-    if direction == SignalDirection.FLAT and last_trade_side == "buy" and ref_price and ref_price > 0:
-        min_sell_ratio = (args.ratio + args.sell_fee_compensation_pct) / 100.0
-        if price < ref_price * (1 + min_sell_ratio):
+    if direction == SignalDirection.FLAT and (position_qty or 0) >= DUST_QTY:
+        sell_trigger, min_profit_ratio, swing_trigger, cost_trigger = compute_sell_trigger(
+            ref_price,
+            avg_cost,
+            args.ratio,
+            args.sell_fee_compensation_pct,
+            args.taker_fee_rate,
+            args.max_slippage,
+        )
+        if sell_trigger > 0 and price < sell_trigger:
             direction = None
-            text = "涨幅未达比例+手续费补偿，观望（上一笔为买入，需多涨 %.2f%% 再卖）" % (args.sell_fee_compensation_pct,)
+            text = (
+                "上涨已接近卖点，但未达到综合卖出阈值；需同时满足波动目标和手续费保护"
+                f"（综合阈值 {sell_trigger:.2f}，当前 {price:.2f}）"
+            )
     # 空仓时若价格上涨到“卖出阈值”，不应把参考价继续上抬，否则买入触发价会一路追涨。
     if direction == SignalDirection.FLAT and (position_qty or 0) < DUST_QTY:
         direction = None
@@ -490,7 +543,7 @@ def run_once(args) -> int:
                                 _log("持仓为粉尘或空仓，仅更新参考价，不卖出")
                                 save_state(args.symbol, reference_price=new_ref, position_qty=0)
                                 executed = True
-                            elif not sell_profit_ok(exec_price, avg_cost, args.taker_fee_rate):
+                            elif not sell_profit_ok(exec_price, avg_cost, args.taker_fee_rate, args.max_slippage):
                                 _log("卖出跳过: 扣费后利润空间不足，不卖出")
                             else:
                                 pos = account.positions.get(args.symbol)
