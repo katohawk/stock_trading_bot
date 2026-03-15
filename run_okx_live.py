@@ -44,6 +44,44 @@ def _log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] [日志] {msg}")
 
 
+def sync_exchange_position_state(
+    symbol: str,
+    price: float,
+    exchange_qty: float,
+    reference_price: float,
+    avg_cost: float,
+    position_qty: float,
+) -> tuple[float, float, float, bool]:
+    """
+    用交易所实际持仓补齐本地状态。
+
+    关键规则：
+    - 发现已有仓位但本地 reference_price 缺失时，用成本价兜底初始化，
+      避免策略每轮都停在“暂无参考价”而永远不给卖出信号。
+    - avg_cost 缺失时退化为当前价，保证状态完整。
+    """
+    changed = False
+    next_qty = position_qty or 0
+    next_avg_cost = avg_cost
+    next_ref_price = reference_price
+
+    if (exchange_qty or 0) >= DUST_QTY:
+        if next_qty < DUST_QTY:
+            next_qty = exchange_qty
+            changed = True
+        if not next_avg_cost or next_avg_cost <= 0:
+            next_avg_cost = price
+            changed = True
+        if not next_ref_price or next_ref_price <= 0:
+            next_ref_price = next_avg_cost or price
+            changed = True
+    elif next_qty >= DUST_QTY or (next_avg_cost or 0) > 0:
+        next_qty = 0
+        changed = True
+
+    return next_ref_price, next_avg_cost, next_qty, changed
+
+
 def load_state(symbol: str) -> dict:
     """从 .monitor_ref.json 读取 reference_price、avg_cost、position_qty。"""
     if not MONITOR_REF_FILE.exists():
@@ -301,16 +339,24 @@ def run_once(args) -> int:
                     save_session_pnl(session_start, cumulative_fee)
                 pos = account.positions.get(args.symbol)
                 qty_from_ex = (pos.quantity if pos else 0) or 0
-                if qty_from_ex >= DUST_QTY and not (position_qty or 0):
-                    position_qty = qty_from_ex
-                    if not avg_cost or avg_cost <= 0:
-                        avg_cost = price
-                    save_state(args.symbol, position_qty=position_qty, avg_cost=avg_cost)
-                    _log("已从交易所同步持仓: 数量=%s 成本(估)=%.4f" % (position_qty, avg_cost))
-                elif qty_from_ex < DUST_QTY and (position_qty or avg_cost):
-                    position_qty = 0
-                    save_state(args.symbol, position_qty=0)
-                    _log("交易所持仓为粉尘或空仓，已置空本地持仓与成本")
+                ref_price, avg_cost, position_qty, changed = sync_exchange_position_state(
+                    args.symbol,
+                    price,
+                    qty_from_ex,
+                    ref_price,
+                    avg_cost,
+                    position_qty,
+                )
+                if changed:
+                    strategy.set_reference(ref_price)
+                    save_state(args.symbol, reference_price=ref_price, position_qty=position_qty, avg_cost=avg_cost)
+                    if qty_from_ex >= DUST_QTY:
+                        _log(
+                            "已从交易所同步持仓: 数量=%s 成本(估)=%.4f 参考价=%.4f"
+                            % (position_qty, avg_cost, ref_price)
+                        )
+                    else:
+                        _log("交易所持仓为粉尘或空仓，已置空本地持仓与成本")
                 pnl = account.equity - session_start
                 net_pnl = pnl - cumulative_fee
                 _log(f"{args.symbol} 当前价={price:.4f} 权益={account.equity:.2f} USDT 本次运行收益={pnl:+.2f} USDT 累计手续费(估)={cumulative_fee:.2f} USDT 净收益={net_pnl:+.2f} USDT")
